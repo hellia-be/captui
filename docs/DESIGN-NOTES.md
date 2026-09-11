@@ -75,9 +75,18 @@ the app layer.
 
 Pure argv builders and output naming, kept IO-free so they are testable in CI.
 The A/V mode records screen + a PipeWire source to mkv; the audio-only mode
-writes flac for a lean Whisper transcript. The process spawn and stop live in
-the IO app layer: wf-recorder must be stopped with SIGINT (not a hard kill) so
-it finalizes the container.
+writes flac for a lean Whisper transcript. `wf_recorder_argv` takes an optional
+audio node (omitting `-a` when the user picked "No audio"). `timestamped_name`
+formats a UTC `captui-YYYYMMDD-HHMMSS.<ext>` name from a Unix timestamp using the
+days-from-civil algorithm, so no date crate is pulled in.
+
+The process spawn and stop live in the IO app layer (src/main.rs). After the
+audio pick, captui resolves the output directory (the XDG videos dir via the
+directories crate, else `$HOME/Videos`, then a `captures` subdir), spawns
+wf-recorder as a child with its stdio nulled so it does not corrupt the TUI, and
+tracks the child. Stopping sends SIGINT via the nix crate (never a hard kill, so
+wf-recorder finalizes the container) and waits for the child; quitting while
+recording stops first, so a capture is never left unfinalized.
 
 ## Audio metering (planned)
 

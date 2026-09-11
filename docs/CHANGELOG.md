@@ -13,6 +13,10 @@ Hand-written, newest first. Not tied to version numbers.
 
 ## Features
 
+- Start/stop recording: after the audio pick, captui spawns wf-recorder to a
+  timestamped `.mkv` under the videos dir and shows a recording screen. Press `s`
+  to stop (or `q` to stop and quit); stop sends SIGINT so the container is
+  finalized, never a hard kill. This makes captui an actual recorder.
 - Audio source picker: after choosing a source, pick an audio input on a second
   screen. Sources are enumerated from `pw-dump` (mics and sink monitors for
   system audio), with a "No audio (silent)" option; Esc goes back. Pure
