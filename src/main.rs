@@ -19,6 +19,7 @@ use crossterm::terminal::{
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, HighlightSpacing, List, ListItem, ListState, Paragraph};
 
+use captui::audio::{parse_pw_dump, AudioSource};
 use captui::sources::{
     layout_hints, parse_geometry, parse_wlr_randr, region, sort_reading_order, Output, Source,
 };
@@ -42,46 +43,127 @@ fn enumerate_displays() -> Result<Vec<Output>> {
     Ok(displays)
 }
 
+fn enumerate_audio() -> Result<Vec<AudioSource>> {
+    let out = Command::new("pw-dump")
+        .output()
+        .context("could not run pw-dump (is PipeWire installed?)")?;
+    if !out.status.success() {
+        bail!(
+            "pw-dump failed: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
+    Ok(parse_pw_dump(&String::from_utf8_lossy(&out.stdout)))
+}
+
+struct Selection {
+    source: Source,
+    audio: Option<String>,
+}
+
+enum Screen {
+    Source,
+    Audio,
+}
+
 struct App {
     displays: Vec<Output>,
-    list: ListState,
-    selected: Option<Source>,
+    source_list: ListState,
+    pending_source: Option<Source>,
+    audio_options: Vec<Option<AudioSource>>,
+    audio_list: ListState,
+    screen: Screen,
+    result: Option<Selection>,
     status: Option<String>,
 }
 
 impl App {
     fn new(displays: Vec<Output>) -> Self {
-        let mut list = ListState::default();
+        let mut source_list = ListState::default();
         if !displays.is_empty() {
-            list.select(Some(0));
+            source_list.select(Some(0));
         }
         Self {
             displays,
-            list,
-            selected: None,
+            source_list,
+            pending_source: None,
+            audio_options: Vec::new(),
+            audio_list: ListState::default(),
+            screen: Screen::Source,
+            result: None,
             status: None,
         }
+    }
+
+    fn active_list(&mut self) -> (&mut ListState, usize) {
+        match self.screen {
+            Screen::Source => (&mut self.source_list, self.displays.len()),
+            Screen::Audio => (&mut self.audio_list, self.audio_options.len()),
+        }
+    }
+
+    fn move_by(&mut self, delta: isize) {
+        let (list, len) = self.active_list();
+        if len == 0 {
+            return;
+        }
+        let cur = list.selected().unwrap_or(0) as isize;
+        list.select(Some((cur + delta).rem_euclid(len as isize) as usize));
     }
 
     fn identify(&mut self) {
         self.status = Some(run_identify(&self.displays));
     }
 
-    fn move_by(&mut self, delta: isize) {
-        if self.displays.is_empty() {
-            return;
+    fn choose_display(&mut self) {
+        if let Some(o) = self
+            .source_list
+            .selected()
+            .and_then(|i| self.displays.get(i))
+        {
+            self.pending_source = Some(Source::Display(o.name.clone()));
+            self.enter_audio();
         }
-        let len = self.displays.len();
-        let cur = self.list.selected().unwrap_or(0) as isize;
-        let next = (cur + delta).rem_euclid(len as isize) as usize;
-        self.list.select(Some(next));
     }
 
-    fn confirm(&mut self) {
-        if let Some(i) = self.list.selected() {
-            if let Some(o) = self.displays.get(i) {
-                self.selected = Some(Source::Display(o.name.clone()));
+    fn choose_region(&mut self, src: Source) {
+        self.pending_source = Some(src);
+        self.enter_audio();
+    }
+
+    fn enter_audio(&mut self) {
+        self.status = None;
+        let sources = match enumerate_audio() {
+            Ok(s) => s,
+            Err(e) => {
+                self.status = Some(format!("{e:#}"));
+                Vec::new()
             }
+        };
+        self.audio_options = std::iter::once(None)
+            .chain(sources.into_iter().map(Some))
+            .collect();
+        self.audio_list.select(Some(0));
+        self.screen = Screen::Audio;
+    }
+
+    fn back_to_source(&mut self) {
+        self.pending_source = None;
+        self.status = None;
+        self.screen = Screen::Source;
+    }
+
+    fn confirm_audio(&mut self) {
+        let choice = self
+            .audio_list
+            .selected()
+            .and_then(|i| self.audio_options.get(i));
+        let audio = match choice {
+            Some(c) => c.as_ref().map(|a| a.node_name.clone()),
+            None => return,
+        };
+        if let Some(source) = self.pending_source.take() {
+            self.result = Some(Selection { source, audio });
         }
     }
 }
@@ -100,11 +182,15 @@ fn main() -> Result<()> {
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
 
-    let app = res?;
-    match app.selected {
-        Some(Source::Display(name)) => println!("selected display: {name}"),
-        Some(Source::Region(geom)) => println!("selected region: {geom}"),
-        None => {}
+    if let Some(sel) = res?.result {
+        match sel.source {
+            Source::Display(name) => println!("source: display {name}"),
+            Source::Region(geom) => println!("source: region {geom}"),
+        }
+        match sel.audio {
+            Some(name) => println!("audio: {name}"),
+            None => println!("audio: none (silent)"),
+        }
     }
     Ok(())
 }
@@ -121,30 +207,39 @@ fn run(
     loop {
         terminal.draw(|f| draw(f, &mut app, error.as_deref()))?;
 
-        if event::poll(Duration::from_millis(200))? {
-            if let Event::Key(k) = event::read()? {
-                if k.kind != KeyEventKind::Press {
-                    continue;
+        if !event::poll(Duration::from_millis(200))? {
+            continue;
+        }
+        let Event::Key(k) = event::read()? else {
+            continue;
+        };
+        if k.kind != KeyEventKind::Press {
+            continue;
+        }
+        match app.screen {
+            Screen::Source => match k.code {
+                KeyCode::Char('q') | KeyCode::Esc => return Ok(app),
+                KeyCode::Down | KeyCode::Char('j') => app.move_by(1),
+                KeyCode::Up | KeyCode::Char('k') => app.move_by(-1),
+                KeyCode::Char('i') => app.identify(),
+                KeyCode::Char('r') => match run_slurp() {
+                    Ok(src) => app.choose_region(src),
+                    Err(e) => app.status = Some(format!("{e:#}")),
+                },
+                KeyCode::Enter => app.choose_display(),
+                _ => {}
+            },
+            Screen::Audio => match k.code {
+                KeyCode::Char('q') => return Ok(app),
+                KeyCode::Esc => app.back_to_source(),
+                KeyCode::Down | KeyCode::Char('j') => app.move_by(1),
+                KeyCode::Up | KeyCode::Char('k') => app.move_by(-1),
+                KeyCode::Enter => {
+                    app.confirm_audio();
+                    return Ok(app);
                 }
-                match k.code {
-                    KeyCode::Char('q') | KeyCode::Esc => return Ok(app),
-                    KeyCode::Down | KeyCode::Char('j') => app.move_by(1),
-                    KeyCode::Up | KeyCode::Char('k') => app.move_by(-1),
-                    KeyCode::Char('i') => app.identify(),
-                    KeyCode::Char('r') => match run_slurp() {
-                        Ok(src) => {
-                            app.selected = Some(src);
-                            return Ok(app);
-                        }
-                        Err(e) => app.status = Some(format!("{e:#}")),
-                    },
-                    KeyCode::Enter => {
-                        app.confirm();
-                        return Ok(app);
-                    }
-                    _ => {}
-                }
-            }
+                _ => {}
+            },
         }
     }
 }
@@ -165,7 +260,6 @@ fn run_slurp() -> Result<Source> {
 #[cfg(feature = "identify")]
 fn run_identify(displays: &[Output]) -> String {
     use std::collections::HashMap;
-    use std::time::Duration;
 
     let numbers: HashMap<String, u32> = displays
         .iter()
@@ -195,19 +289,36 @@ fn row_label(n: usize, o: &Output, hint: &str) -> String {
         .to_string()
 }
 
+fn audio_label(choice: &Option<AudioSource>) -> String {
+    match choice {
+        None => "No audio (silent)".into(),
+        Some(a) => a.description.clone(),
+    }
+}
+
 fn draw(f: &mut Frame, app: &mut App, error: Option<&str>) {
     let chunks = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).split(f.area());
+    match app.screen {
+        Screen::Source => draw_source(f, app, error, chunks[0]),
+        Screen::Audio => draw_audio(f, app, chunks[0]),
+    }
+    draw_footer(f, app, chunks[1]);
+}
 
+fn draw_source(f: &mut Frame, app: &mut App, error: Option<&str>, area: Rect) {
     let block = Block::default()
         .title(" captui - select a source ")
         .borders(Borders::ALL);
-
     if let Some(err) = error {
-        let body = Paragraph::new(err).block(block).style(Style::new().red());
-        f.render_widget(body, chunks[0]);
+        f.render_widget(
+            Paragraph::new(err).block(block).style(Style::new().red()),
+            area,
+        );
     } else if app.displays.is_empty() {
-        let body = Paragraph::new("no enabled displays found.").block(block);
-        f.render_widget(body, chunks[0]);
+        f.render_widget(
+            Paragraph::new("no enabled displays found.").block(block),
+            area,
+        );
     } else {
         let hints = layout_hints(&app.displays);
         let items: Vec<ListItem> = app
@@ -222,13 +333,35 @@ fn draw(f: &mut Frame, app: &mut App, error: Option<&str>) {
             .highlight_symbol("> ")
             .highlight_spacing(HighlightSpacing::Always)
             .highlight_style(Style::new().reversed());
-        f.render_stateful_widget(list, chunks[0], &mut app.list);
+        f.render_stateful_widget(list, area, &mut app.source_list);
     }
+}
 
+fn draw_audio(f: &mut Frame, app: &mut App, area: Rect) {
+    let block = Block::default()
+        .title(" captui - select audio ")
+        .borders(Borders::ALL);
+    let items: Vec<ListItem> = app
+        .audio_options
+        .iter()
+        .map(|c| ListItem::new(audio_label(c)))
+        .collect();
+    let list = List::new(items)
+        .block(block)
+        .highlight_symbol("> ")
+        .highlight_spacing(HighlightSpacing::Always)
+        .highlight_style(Style::new().reversed());
+    f.render_stateful_widget(list, area, &mut app.audio_list);
+}
+
+fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
+    let hint = match app.screen {
+        Screen::Source => " up/down move  i identify  enter display  r region  q quit ",
+        Screen::Audio => " up/down move  enter select  esc back  q quit ",
+    };
     let footer = match &app.status {
         Some(s) => Paragraph::new(format!(" {s} ")).style(Style::new().yellow()),
-        None => Paragraph::new(" up/down move  i identify  enter display  r region  q quit ")
-            .style(Style::new().dim()),
+        None => Paragraph::new(hint).style(Style::new().dim()),
     };
-    f.render_widget(footer, chunks[1]);
+    f.render_widget(footer, area);
 }
