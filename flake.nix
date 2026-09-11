@@ -10,6 +10,16 @@
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs { inherit system; };
+        # Tools captui shells out to at runtime. wrapProgram puts these on the
+        # packaged binary's PATH; the devShell reuses the same list.
+        runtimeDeps = with pkgs; [
+          wf-recorder
+          wl-screenrec
+          slurp
+          wlr-randr
+          pipewire # pw-record, pw-dump
+          wireplumber # wpctl
+        ];
       in
       {
         packages.default = pkgs.rustPlatform.buildRustPackage {
@@ -17,6 +27,11 @@
           version = "0.1.0";
           src = ./.;
           cargoLock.lockFile = ./Cargo.lock;
+          nativeBuildInputs = [ pkgs.makeWrapper ];
+          postInstall = ''
+            wrapProgram $out/bin/captui \
+              --prefix PATH : ${pkgs.lib.makeBinPath runtimeDeps}
+          '';
           meta = {
             description = "Terminal screen/window/region recorder with sound (wlroots)";
             license = pkgs.lib.licenses.gpl3Plus;
@@ -25,9 +40,7 @@
         };
 
         devShells.default = pkgs.mkShell {
-          # Runtime tools captui shells out to. Once the recorder spawns them,
-          # the package should wrapProgram these onto PATH too.
-          packages = with pkgs; [
+          packages = (with pkgs; [
             cargo
             rustc
             clippy
@@ -35,13 +48,7 @@
             rust-analyzer
             cargo-audit
             cargo-deny
-            wf-recorder
-            wl-screenrec
-            slurp
-            wlr-randr
-            pipewire
-            wireplumber
-          ];
+          ]) ++ runtimeDeps;
         };
       });
 }
