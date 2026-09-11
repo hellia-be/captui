@@ -1,0 +1,4 @@
+# Code owners for captui. Sole maintainer and copyright holder.
+# Auto-requests review on every PR. Required-owner-review is intentionally
+# off in branch protection so a solo repo does not deadlock.
+* @hellia-be
