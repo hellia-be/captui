@@ -13,6 +13,9 @@ Hand-written, newest first. Not tied to version numbers.
 
 ## Features
 
+- Region source: pressing `r` in the picker runs `slurp` for an interactive
+  drag-select and records the chosen rectangle as the capture source (validated
+  by the pure `parse_geometry`). Works even when no displays are enumerated.
 - Displays are numbered in reading order (top to bottom, then left to right) by
   layout position, instead of wlr-randr's spatially arbitrary connector order,
   so the picker and identify numbers line up with the physical arrangement.

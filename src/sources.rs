@@ -19,6 +19,20 @@ pub fn region(x: i32, y: i32, w: u32, h: u32) -> String {
     format!("{x},{y} {w}x{h}")
 }
 
+pub fn parse_geometry(s: &str) -> Option<(i32, i32, u32, u32)> {
+    let (pos, size) = s.trim().split_once(' ')?;
+    let (x, y) = pos.split_once(',')?;
+    let (w, h) = size.split_once('x')?;
+    let x = x.trim().parse().ok()?;
+    let y = y.trim().parse().ok()?;
+    let w: u32 = w.trim().parse().ok()?;
+    let h: u32 = h.trim().parse().ok()?;
+    if w == 0 || h == 0 {
+        return None;
+    }
+    Some((x, y, w, h))
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Mode {
     pub width: u32,
@@ -185,6 +199,26 @@ mod tests {
     fn region_args() {
         let s = Source::Region(region(0, 0, 1920, 1080));
         assert_eq!(s.wf_args(), vec!["-g", "0,0 1920x1080"]);
+    }
+
+    #[test]
+    fn parses_slurp_geometry() {
+        assert_eq!(
+            parse_geometry("100,200 640x480\n"),
+            Some((100, 200, 640, 480))
+        );
+        assert_eq!(
+            parse_geometry("-5,-10 1920x1080"),
+            Some((-5, -10, 1920, 1080))
+        );
+    }
+
+    #[test]
+    fn rejects_bad_geometry() {
+        assert_eq!(parse_geometry(""), None);
+        assert_eq!(parse_geometry("100,200"), None);
+        assert_eq!(parse_geometry("100,200 640x0"), None);
+        assert_eq!(parse_geometry("a,b cxd"), None);
     }
 
     #[test]
