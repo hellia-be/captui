@@ -11,6 +11,13 @@ A window is captured as a fixed region derived from the compositor's reported
 geometry (Umbriel/Niri IPC); it does not follow the window if it moves. Multiple
 displays into one file is not native to wf-recorder (one output per instance).
 
+A region source comes from `slurp`: pressing `r` in the picker spawns slurp for
+an interactive drag-select and captures its `X,Y WxH` on stdout, validated by the
+pure `parse_geometry` (rejects malformed output and zero-area rectangles) into a
+`Source::Region`. Spawning slurp is IO in the app layer; slurp draws its overlay
+through the compositor, so the TUI stays up underneath. Region selection works
+even when no displays enumerated.
+
 Displays are enumerated by parsing `wlr-randr`'s plain-text output
 (`parse_wlr_randr`): an output header sits at column 0 as `NAME "DESCRIPTION"`,
 and its indented properties follow. We read `Enabled: yes|no`, `Position: X,Y`,

@@ -10,7 +10,7 @@ use std::io;
 use std::process::Command;
 use std::time::Duration;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use crossterm::execute;
 use crossterm::terminal::{
@@ -19,7 +19,9 @@ use crossterm::terminal::{
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, HighlightSpacing, List, ListItem, ListState, Paragraph};
 
-use captui::sources::{layout_hints, parse_wlr_randr, sort_reading_order, Output, Source};
+use captui::sources::{
+    layout_hints, parse_geometry, parse_wlr_randr, region, sort_reading_order, Output, Source,
+};
 
 #[cfg(feature = "identify")]
 mod identify;
@@ -99,8 +101,10 @@ fn main() -> Result<()> {
     terminal.show_cursor()?;
 
     let app = res?;
-    if let Some(Source::Display(name)) = app.selected {
-        println!("selected display: {name}");
+    match app.selected {
+        Some(Source::Display(name)) => println!("selected display: {name}"),
+        Some(Source::Region(geom)) => println!("selected region: {geom}"),
+        None => {}
     }
     Ok(())
 }
@@ -127,6 +131,13 @@ fn run(
                     KeyCode::Down | KeyCode::Char('j') => app.move_by(1),
                     KeyCode::Up | KeyCode::Char('k') => app.move_by(-1),
                     KeyCode::Char('i') => app.identify(),
+                    KeyCode::Char('r') => match run_slurp() {
+                        Ok(src) => {
+                            app.selected = Some(src);
+                            return Ok(app);
+                        }
+                        Err(e) => app.status = Some(format!("{e:#}")),
+                    },
                     KeyCode::Enter => {
                         app.confirm();
                         return Ok(app);
@@ -136,6 +147,19 @@ fn run(
             }
         }
     }
+}
+
+fn run_slurp() -> Result<Source> {
+    let out = Command::new("slurp")
+        .output()
+        .context("could not run slurp (is it installed?)")?;
+    if !out.status.success() {
+        bail!("region selection cancelled");
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    let (x, y, w, h) = parse_geometry(&text)
+        .ok_or_else(|| anyhow!("unexpected slurp output: {:?}", text.trim()))?;
+    Ok(Source::Region(region(x, y, w, h)))
 }
 
 #[cfg(feature = "identify")]
@@ -175,7 +199,7 @@ fn draw(f: &mut Frame, app: &mut App, error: Option<&str>) {
     let chunks = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).split(f.area());
 
     let block = Block::default()
-        .title(" captui - select a display ")
+        .title(" captui - select a source ")
         .borders(Borders::ALL);
 
     if let Some(err) = error {
@@ -203,7 +227,7 @@ fn draw(f: &mut Frame, app: &mut App, error: Option<&str>) {
 
     let footer = match &app.status {
         Some(s) => Paragraph::new(format!(" {s} ")).style(Style::new().yellow()),
-        None => Paragraph::new(" up/down move  i identify  enter select  q quit ")
+        None => Paragraph::new(" up/down move  i identify  enter display  r region  q quit ")
             .style(Style::new().dim()),
     };
     f.render_widget(footer, chunks[1]);
