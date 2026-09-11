@@ -13,10 +13,22 @@ displays into one file is not native to wf-recorder (one output per instance).
 
 Displays are enumerated by parsing `wlr-randr`'s plain-text output
 (`parse_wlr_randr`): an output header sits at column 0 as `NAME "DESCRIPTION"`,
-its indented properties follow, and only `Enabled: yes|no` is read. The parse is
-pure so CI can test it; the picker filters to enabled outputs, since a disabled
-output has no framebuffer to capture. Running wlr-randr is IO and lives in the
-app layer (src/main.rs), not the CI-tested lib.
+and its indented properties follow. We read `Enabled: yes|no`, `Position: X,Y`,
+and the active mode from the modes line marked as current. That marker is the
+word `current` inside a parenthetical like `(preferred, current)`, so the match
+is on `current`, not the substring `(current)`. The parse is pure so CI can test
+it; the picker filters to enabled outputs, since a disabled output has no
+framebuffer to capture. Running wlr-randr is IO and lives in the app layer
+(src/main.rs), not the CI-tested lib.
+
+Identical monitors (same make/model) share a description, so the connector name
+is the only differentiator and it does not say which physical screen is which.
+The picker therefore shows each output's current mode, layout position, and a
+directional hint (`layout_hints`) derived from how the outputs sit relative to
+each other: per axis, the min coordinate is left/top, the max is right/bottom,
+anything between is center/middle, and an axis all outputs share contributes no
+word. Rows are numbered so a planned identify overlay can flash the matching
+number on each screen.
 
 ## Recorder (src/recorder.rs)
 

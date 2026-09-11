@@ -1,15 +1,17 @@
 # Roadmap
 
 Priority-ordered backlog. Commit subjects reference these item numbers.
+Completed items are removed here and recorded in docs/CHANGELOG.md.
 
 ## P1
 
-1. Source picker: enumerate outputs (wlr-randr) and select a display.
-2. Region source via slurp.
-3. Audio source picker (enumerate PipeWire nodes via wpctl / pw-dump).
-4. Start/stop a wf-recorder capture (spawn, track PID, SIGINT to stop).
-5. Status panel: elapsed timer + growing file size.
-6. Live audio level meter.
+1. Region source via slurp.
+2. Audio source picker (enumerate PipeWire nodes via wpctl / pw-dump).
+3. Start/stop a wf-recorder capture (spawn, track PID, SIGINT to stop).
+4. Status panel: elapsed timer + growing file size.
+5. Live audio level meter.
+6. Identify overlay: flash each output's picker number on its physical screen
+   (Wayland layer-shell; wlroots compositors only).
 
 ## P2
 

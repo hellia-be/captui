@@ -19,10 +19,8 @@ use crossterm::terminal::{
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, HighlightSpacing, List, ListItem, ListState, Paragraph};
 
-use captui::sources::{parse_wlr_randr, Output, Source};
+use captui::sources::{layout_hints, parse_wlr_randr, Output, Source};
 
-/// Enumerate enabled displays by running wlr-randr and parsing its output. A
-/// disabled output has no framebuffer to capture, so it is filtered out here.
 fn enumerate_displays() -> Result<Vec<Output>> {
     let out = Command::new("wlr-randr").output().context(
         "could not run wlr-randr (is it installed and are you on a wlroots Wayland session?)",
@@ -40,7 +38,6 @@ fn enumerate_displays() -> Result<Vec<Output>> {
 struct App {
     displays: Vec<Output>,
     list: ListState,
-    /// Set once a display is chosen; the confirmed capture source.
     selected: Option<Source>,
 }
 
@@ -101,8 +98,6 @@ fn run(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     displays: Result<Vec<Output>>,
 ) -> Result<App> {
-    // Surface an enumeration failure in the UI rather than aborting before the
-    // alternate screen is set up.
     let (mut app, error) = match displays {
         Ok(d) => (App::new(d), None),
         Err(e) => (App::new(Vec::new()), Some(format!("{e:#}"))),
@@ -131,6 +126,17 @@ fn run(
     }
 }
 
+fn row_label(n: usize, o: &Output, hint: &str) -> String {
+    let mode = o.mode.map(|m| m.label()).unwrap_or_else(|| "?".into());
+    let pos = match o.position {
+        Some((x, y)) => format!("@{x},{y}"),
+        None => String::new(),
+    };
+    format!("{n:>2}. {:<9} {:<13} {:<12} {hint}", o.name, mode, pos)
+        .trim_end()
+        .to_string()
+}
+
 fn draw(f: &mut Frame, app: &mut App, error: Option<&str>) {
     let chunks = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).split(f.area());
 
@@ -145,17 +151,13 @@ fn draw(f: &mut Frame, app: &mut App, error: Option<&str>) {
         let body = Paragraph::new("no enabled displays found.").block(block);
         f.render_widget(body, chunks[0]);
     } else {
+        let hints = layout_hints(&app.displays);
         let items: Vec<ListItem> = app
             .displays
             .iter()
-            .map(|o| {
-                let label = if o.description.is_empty() {
-                    o.name.clone()
-                } else {
-                    format!("{}  {}", o.name, o.description)
-                };
-                ListItem::new(label)
-            })
+            .zip(hints)
+            .enumerate()
+            .map(|(i, (o, hint))| ListItem::new(row_label(i + 1, o, &hint)))
             .collect();
         let list = List::new(items)
             .block(block)
