@@ -13,6 +13,9 @@ Hand-written, newest first. Not tied to version numbers.
 
 ## Fixes
 
+- Better video quality: encode with libx264 at `crf=18`, `preset=fast` instead
+  of wf-recorder's soft defaults, so screen text and detail are sharp. (Hardware
+  VAAPI encoding remains the separate wl-screenrec backend on the roadmap.)
 - Audio was recorded muted: the audio node was passed as `-a <node>`, but
   wf-recorder's `-a`/`--audio` takes an optional argument that getopt only binds
   when attached, so it silently fell back to the default source (the mic). Pass

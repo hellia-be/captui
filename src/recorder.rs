@@ -15,9 +15,19 @@ pub fn extension(mode: Mode) -> &'static str {
     }
 }
 
+const VIDEO_CODEC: &str = "libx264";
+const VIDEO_CRF: u32 = 18;
+const VIDEO_PRESET: &str = "fast";
+
 pub fn wf_recorder_argv(source: &Source, audio: Option<&str>, out: &str) -> Vec<String> {
     let mut argv = vec!["wf-recorder".to_string()];
     argv.extend(source.wf_args());
+    argv.push("-c".into());
+    argv.push(VIDEO_CODEC.into());
+    argv.push("-p".into());
+    argv.push(format!("crf={VIDEO_CRF}"));
+    argv.push("-p".into());
+    argv.push(format!("preset={VIDEO_PRESET}"));
     if let Some(a) = audio {
         argv.push(format!("--audio={a}"));
     }
@@ -70,6 +80,12 @@ mod tests {
                 "wf-recorder",
                 "-o",
                 "HDMI-A-1",
+                "-c",
+                "libx264",
+                "-p",
+                "crf=18",
+                "-p",
+                "preset=fast",
                 "--audio=alsa_output.monitor",
                 "-f",
                 "/tmp/cap.mkv"
@@ -83,7 +99,19 @@ mod tests {
         let argv = wf_recorder_argv(&s, None, "/tmp/cap.mkv");
         assert_eq!(
             argv,
-            vec!["wf-recorder", "-g", "0,0 640x480", "-f", "/tmp/cap.mkv"]
+            vec![
+                "wf-recorder",
+                "-g",
+                "0,0 640x480",
+                "-c",
+                "libx264",
+                "-p",
+                "crf=18",
+                "-p",
+                "preset=fast",
+                "-f",
+                "/tmp/cap.mkv"
+            ]
         );
     }
 
