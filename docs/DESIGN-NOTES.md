@@ -27,8 +27,26 @@ The picker therefore shows each output's current mode, layout position, and a
 directional hint (`layout_hints`) derived from how the outputs sit relative to
 each other: per axis, the min coordinate is left/top, the max is right/bottom,
 anything between is center/middle, and an axis all outputs share contributes no
-word. Rows are numbered so a planned identify overlay can flash the matching
-number on each screen.
+word. Rows are numbered so the identify overlay can flash the matching number on
+each screen.
+
+## Identify overlay (src/identify.rs, src/font.rs)
+
+Pressing `i` in the picker flashes each display's row number on its physical
+screen for ~1.6s, the reliable way to tell identical monitors apart. This is a
+Wayland layer-shell client (smithay-client-toolkit): one `Overlay` layer surface
+per output, centered, drawn into an shm buffer, matched to the picker rows by the
+output's connector name. It is a departure from the otherwise CLI-driven design,
+justified because no CLI can draw on top of a specific output.
+
+It is gated behind the non-default `identify` Cargo feature so the CI test and
+lint jobs (which have no Wayland) build pure Rust only; the nix package, the real
+downstream gate, builds `--features identify`. smithay-client-toolkit is taken
+with `default-features = false` to drop its xkbcommon and calloop requirements
+(we use neither), which also means the pure-Rust wayland backend and thus no
+libwayland or pkg-config at build or run time. The Wayland code is a binary-only
+module, never in the CI-tested lib; only the digit bitmap (`font.rs`) is pure and
+unit-tested. Local runs use `cargo run --features identify`.
 
 ## Recorder (src/recorder.rs)
 

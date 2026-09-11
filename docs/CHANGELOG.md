@@ -13,6 +13,11 @@ Hand-written, newest first. Not tied to version numbers.
 
 ## Features
 
+- Identify overlay: pressing `i` in the picker flashes each display's row number
+  on its physical screen (a Wayland layer-shell client, smithay-client-toolkit),
+  the reliable way to tell identical monitors apart. Gated behind the non-default
+  `identify` Cargo feature; the nix package ships it built in. Pure-Rust wayland
+  backend, so no libwayland or pkg-config is pulled in.
 - Source picker distinguishes identical monitors: each row is numbered and
   shows the current mode, layout position, and a directional hint (left/right,
   top/bottom, or a grid combination) derived from how the outputs sit relative

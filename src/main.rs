@@ -21,6 +21,9 @@ use ratatui::widgets::{Block, Borders, HighlightSpacing, List, ListItem, ListSta
 
 use captui::sources::{layout_hints, parse_wlr_randr, Output, Source};
 
+#[cfg(feature = "identify")]
+mod identify;
+
 fn enumerate_displays() -> Result<Vec<Output>> {
     let out = Command::new("wlr-randr").output().context(
         "could not run wlr-randr (is it installed and are you on a wlroots Wayland session?)",
@@ -39,6 +42,7 @@ struct App {
     displays: Vec<Output>,
     list: ListState,
     selected: Option<Source>,
+    status: Option<String>,
 }
 
 impl App {
@@ -51,7 +55,12 @@ impl App {
             displays,
             list,
             selected: None,
+            status: None,
         }
+    }
+
+    fn identify(&mut self) {
+        self.status = Some(run_identify(&self.displays));
     }
 
     fn move_by(&mut self, delta: isize) {
@@ -115,6 +124,7 @@ fn run(
                     KeyCode::Char('q') | KeyCode::Esc => return Ok(app),
                     KeyCode::Down | KeyCode::Char('j') => app.move_by(1),
                     KeyCode::Up | KeyCode::Char('k') => app.move_by(-1),
+                    KeyCode::Char('i') => app.identify(),
                     KeyCode::Enter => {
                         app.confirm();
                         return Ok(app);
@@ -124,6 +134,28 @@ fn run(
             }
         }
     }
+}
+
+#[cfg(feature = "identify")]
+fn run_identify(displays: &[Output]) -> String {
+    use std::collections::HashMap;
+    use std::time::Duration;
+
+    let numbers: HashMap<String, u32> = displays
+        .iter()
+        .enumerate()
+        .map(|(i, o)| (o.name.clone(), i as u32 + 1))
+        .collect();
+    match identify::flash(&numbers, Duration::from_millis(1600)) {
+        Ok(0) => "identify: no matching outputs".into(),
+        Ok(n) => format!("flashed a number on {n} screen(s)"),
+        Err(e) => format!("identify failed: {e:#}"),
+    }
+}
+
+#[cfg(not(feature = "identify"))]
+fn run_identify(_displays: &[Output]) -> String {
+    "identify overlay not built in this binary".into()
 }
 
 fn row_label(n: usize, o: &Output, hint: &str) -> String {
@@ -167,6 +199,10 @@ fn draw(f: &mut Frame, app: &mut App, error: Option<&str>) {
         f.render_stateful_widget(list, chunks[0], &mut app.list);
     }
 
-    let hint = Paragraph::new(" up/down move  enter select  q quit ").style(Style::new().dim());
-    f.render_widget(hint, chunks[1]);
+    let footer = match &app.status {
+        Some(s) => Paragraph::new(format!(" {s} ")).style(Style::new().yellow()),
+        None => Paragraph::new(" up/down move  i identify  enter select  q quit ")
+            .style(Style::new().dim()),
+    };
+    f.render_widget(footer, chunks[1]);
 }

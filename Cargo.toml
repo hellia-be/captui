@@ -15,7 +15,11 @@ path = "src/lib.rs"
 name = "captui"
 path = "src/main.rs"
 
+[features]
+identify = ["dep:smithay-client-toolkit"]
+
 [dependencies]
 anyhow = "1"
 crossterm = "0.29"
 ratatui = "0.30"
+smithay-client-toolkit = { version = "0.21", optional = true, default-features = false }
