@@ -64,12 +64,18 @@ After a source is chosen, the picker offers an audio source. They are enumerated
 from `pw-dump`'s JSON (parsed with serde_json in the pure `parse_pw_dump`, so CI
 can test it) rather than by scraping `wpctl status`'s tree. Each `Audio/Source`
 node is a real input (a mic); each `Audio/Sink` becomes a "Monitor of <sink>"
-option whose value is the sink's node name plus `.monitor`, which is how the
-PulseAudio-compatible layer names a sink's monitor for capturing system audio.
-The value carried forward is the node name that `wf-recorder -a` wants; node
-names are runtime state, never hardcoded. Mics are listed before monitors, each
-alphabetical, with a leading "No audio (silent)" option. Running pw-dump is IO in
-the app layer.
+option whose value is the sink's node name plus `.monitor`, the PulseAudio name
+for a sink's monitor. The default sink (from the `default.audio.sink` metadata)
+is surfaced first as a plain "System audio (all)" option, and its own monitor is
+not also listed to avoid a duplicate. Order: System audio, then mics, then other
+monitors, then "No audio (silent)"; the first (usually System audio) is
+preselected. Running pw-dump is IO in the app layer.
+
+The value carried forward is the node name passed to wf-recorder. It must be
+given as `--audio=<node>` (the attached form): wf-recorder's `-a`/`--audio` takes
+an optional argument, so getopt only binds a value when attached. A space-
+separated `-a <node>` silently records the default source (the mic) instead,
+which is the "muted" bug we hit. Node names are runtime state, never hardcoded.
 
 ## Recorder (src/recorder.rs)
 

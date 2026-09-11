@@ -19,8 +19,7 @@ pub fn wf_recorder_argv(source: &Source, audio: Option<&str>, out: &str) -> Vec<
     let mut argv = vec!["wf-recorder".to_string()];
     argv.extend(source.wf_args());
     if let Some(a) = audio {
-        argv.push("-a".into());
-        argv.push(a.into());
+        argv.push(format!("--audio={a}"));
     }
     argv.push("-f".into());
     argv.push(out.into());
@@ -71,8 +70,7 @@ mod tests {
                 "wf-recorder",
                 "-o",
                 "HDMI-A-1",
-                "-a",
-                "alsa_output.monitor",
+                "--audio=alsa_output.monitor",
                 "-f",
                 "/tmp/cap.mkv"
             ]
