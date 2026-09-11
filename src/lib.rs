@@ -1,6 +1,5 @@
-//! captui core: pure helpers (source args, recorder argv, output naming) kept
-//! IO-free so they are unit-testable in CI, which has no Wayland session and no
-//! PipeWire.
+//! captui core: pure helpers. See docs/DESIGN-NOTES.md.
 
+pub mod font;
 pub mod recorder;
 pub mod sources;

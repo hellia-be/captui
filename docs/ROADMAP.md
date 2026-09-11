@@ -10,8 +10,6 @@ Completed items are removed here and recorded in docs/CHANGELOG.md.
 3. Start/stop a wf-recorder capture (spawn, track PID, SIGINT to stop).
 4. Status panel: elapsed timer + growing file size.
 5. Live audio level meter.
-6. Identify overlay: flash each output's picker number on its physical screen
-   (Wayland layer-shell; wlroots compositors only).
 
 ## P2
 
