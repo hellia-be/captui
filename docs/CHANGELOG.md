@@ -13,6 +13,10 @@ Hand-written, newest first. Not tied to version numbers.
 
 ## Features
 
+- Audio source picker: after choosing a source, pick an audio input on a second
+  screen. Sources are enumerated from `pw-dump` (mics and sink monitors for
+  system audio), with a "No audio (silent)" option; Esc goes back. Pure
+  `parse_pw_dump` parser with tests.
 - Region source: pressing `r` in the picker runs `slurp` for an interactive
   drag-select and records the chosen rectangle as the capture source (validated
   by the pure `parse_geometry`). Works even when no displays are enumerated.

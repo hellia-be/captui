@@ -58,6 +58,19 @@ libwayland or pkg-config at build or run time. The Wayland code is a binary-only
 module, never in the CI-tested lib; only the digit bitmap (`font.rs`) is pure and
 unit-tested. Local runs use `cargo run --features identify`.
 
+## Audio sources (src/audio.rs)
+
+After a source is chosen, the picker offers an audio source. They are enumerated
+from `pw-dump`'s JSON (parsed with serde_json in the pure `parse_pw_dump`, so CI
+can test it) rather than by scraping `wpctl status`'s tree. Each `Audio/Source`
+node is a real input (a mic); each `Audio/Sink` becomes a "Monitor of <sink>"
+option whose value is the sink's node name plus `.monitor`, which is how the
+PulseAudio-compatible layer names a sink's monitor for capturing system audio.
+The value carried forward is the node name that `wf-recorder -a` wants; node
+names are runtime state, never hardcoded. Mics are listed before monitors, each
+alphabetical, with a leading "No audio (silent)" option. Running pw-dump is IO in
+the app layer.
+
 ## Recorder (src/recorder.rs)
 
 Pure argv builders and output naming, kept IO-free so they are testable in CI.
@@ -70,7 +83,7 @@ it finalizes the container.
 
 The "is sound coming in" confirmation is a live level meter read from a PipeWire
 CLI stream (pw-mon / pw-dump); link libpipewire only if parsing proves too thin.
-Node names are runtime state, enumerated live (wpctl / pw-dump), never hardcoded.
+It meters the audio source enumerated by src/audio.rs.
 
 ## Whisper handoff (planned)
 
