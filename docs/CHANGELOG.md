@@ -19,6 +19,10 @@ Hand-written, newest first. Not tied to version numbers.
 
 ## Delivery
 
+- Wrap the packaged binary with its runtime tools (wf-recorder, wl-screenrec,
+  slurp, wlr-randr, PipeWire and WirePlumber CLIs) on `PATH` via wrapProgram, so
+  `nix run`/installed captui finds them without a devShell. Same list feeds the
+  devShell.
 - Commit `flake.lock` so `nix run github:hellia-be/captui` works from an
   immutable git rev (nix cannot write a lock into the fetched source) and
   downstream consumers pin reproducible inputs.
