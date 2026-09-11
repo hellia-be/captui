@@ -82,7 +82,14 @@ which is the "muted" bug we hit. Node names are runtime state, never hardcoded.
 Pure argv builders and output naming, kept IO-free so they are testable in CI.
 The A/V mode records screen + a PipeWire source to mkv; the audio-only mode
 writes flac for a lean Whisper transcript. `wf_recorder_argv` takes an optional
-audio node (omitting `-a` when the user picked "No audio"). `timestamped_name`
+audio node (omitting `--audio` when the user picked "No audio").
+
+Video quality is set explicitly instead of relying on wf-recorder's defaults,
+which look soft (especially screen text): software libx264 at `crf=18` (visually
+near-lossless, sharper than the ~23 default) with `preset=fast` to stay
+realtime. These live as constants in recorder.rs; a future config item can
+expose them, and hardware (VAAPI) encoding is the separate wl-screenrec backend
+on the roadmap. `timestamped_name`
 formats a UTC `captui-YYYYMMDD-HHMMSS.<ext>` name from a Unix timestamp using the
 days-from-civil algorithm, so no date crate is pulled in.
 
