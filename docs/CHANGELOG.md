@@ -13,9 +13,13 @@ Hand-written, newest first. Not tied to version numbers.
 
 ## Features
 
+- Source picker distinguishes identical monitors: each row is numbered and
+  shows the current mode, layout position, and a directional hint (left/right,
+  top/bottom, or a grid combination) derived from how the outputs sit relative
+  to each other. Parsing and the hint logic are pure and unit-tested.
 - Source picker: enumerate displays from wlr-randr and select one in a
-  navigable ratatui list (ROADMAP P1 item 1). Pure `parse_wlr_randr` parser is
-  unit-tested; the picker filters to enabled outputs.
+  navigable ratatui list. Pure `parse_wlr_randr` parser is unit-tested; the
+  picker filters to enabled outputs.
 
 ## Delivery
 
