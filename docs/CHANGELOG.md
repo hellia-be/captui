@@ -13,6 +13,9 @@ Hand-written, newest first. Not tied to version numbers.
 
 ## Features
 
+- Displays are numbered in reading order (top to bottom, then left to right) by
+  layout position, instead of wlr-randr's spatially arbitrary connector order,
+  so the picker and identify numbers line up with the physical arrangement.
 - Identify overlay: pressing `i` in the picker flashes each display's row number
   on its physical screen (a Wayland layer-shell client, smithay-client-toolkit),
   the reliable way to tell identical monitors apart. Gated behind the non-default

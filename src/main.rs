@@ -19,7 +19,7 @@ use crossterm::terminal::{
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, HighlightSpacing, List, ListItem, ListState, Paragraph};
 
-use captui::sources::{layout_hints, parse_wlr_randr, Output, Source};
+use captui::sources::{layout_hints, parse_wlr_randr, sort_reading_order, Output, Source};
 
 #[cfg(feature = "identify")]
 mod identify;
@@ -35,7 +35,9 @@ fn enumerate_displays() -> Result<Vec<Output>> {
         );
     }
     let outputs = parse_wlr_randr(&String::from_utf8_lossy(&out.stdout));
-    Ok(outputs.into_iter().filter(|o| o.enabled).collect())
+    let mut displays: Vec<Output> = outputs.into_iter().filter(|o| o.enabled).collect();
+    sort_reading_order(&mut displays);
+    Ok(displays)
 }
 
 struct App {

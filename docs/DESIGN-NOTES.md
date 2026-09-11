@@ -27,8 +27,11 @@ The picker therefore shows each output's current mode, layout position, and a
 directional hint (`layout_hints`) derived from how the outputs sit relative to
 each other: per axis, the min coordinate is left/top, the max is right/bottom,
 anything between is center/middle, and an axis all outputs share contributes no
-word. Rows are numbered so the identify overlay can flash the matching number on
-each screen.
+word. wlr-randr enumerates in connector order, which is spatially arbitrary, so
+enabled displays are sorted into reading order (top to bottom, then left to
+right, by position; unknown-position outputs last, stably) before numbering.
+Rows are numbered so the identify overlay can flash the matching number on each
+screen.
 
 ## Identify overlay (src/identify.rs, src/font.rs)
 

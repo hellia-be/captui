@@ -106,6 +106,19 @@ fn parse_mode_line(t: &str) -> Option<Mode> {
     })
 }
 
+pub fn sort_reading_order(outputs: &mut [Output]) {
+    outputs.sort_by(|a, b| {
+        let ka = a.position.map(|(x, y)| (y, x));
+        let kb = b.position.map(|(x, y)| (y, x));
+        match (ka, kb) {
+            (Some(a), Some(b)) => a.cmp(&b),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => std::cmp::Ordering::Equal,
+        }
+    });
+}
+
 pub fn layout_hints(outputs: &[Output]) -> Vec<String> {
     let xs: Vec<i32> = outputs
         .iter()
@@ -258,6 +271,29 @@ HDMI-A-1 \"Samsung S22C300 (HDMI-A-1)\"
     fn vertical_stack_gets_top_bottom_only() {
         let outputs = vec![at(0, 0), at(0, 1080)];
         assert_eq!(layout_hints(&outputs), vec!["top", "bottom"]);
+    }
+
+    #[test]
+    fn sorts_top_to_bottom_then_left_to_right() {
+        let mut outputs = vec![at(1920, 0), at(3840, 0), at(0, 0), at(0, 1080)];
+        sort_reading_order(&mut outputs);
+        let positions: Vec<_> = outputs.iter().map(|o| o.position.unwrap()).collect();
+        assert_eq!(positions, vec![(0, 0), (1920, 0), (3840, 0), (0, 1080)]);
+    }
+
+    #[test]
+    fn sorts_unknown_position_last_stably() {
+        let mut a = at(1920, 0);
+        let mut b = at(0, 0);
+        a.position = None;
+        b.position = None;
+        a.name = "first".into();
+        b.name = "second".into();
+        let mut outputs = vec![a, at(0, 0), b];
+        sort_reading_order(&mut outputs);
+        assert_eq!(outputs[0].position, Some((0, 0)));
+        assert_eq!(outputs[1].name, "first");
+        assert_eq!(outputs[2].name, "second");
     }
 
     #[test]
