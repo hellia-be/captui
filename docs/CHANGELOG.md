@@ -17,6 +17,12 @@ Hand-written, newest first. Not tied to version numbers.
   navigable ratatui list (ROADMAP P1 item 1). Pure `parse_wlr_randr` parser is
   unit-tested; the picker filters to enabled outputs.
 
+## Delivery
+
+- Commit `flake.lock` so `nix run github:hellia-be/captui` works from an
+  immutable git rev (nix cannot write a lock into the fetched source) and
+  downstream consumers pin reproducible inputs.
+
 ## Scaffold
 
 - Repo scaffold: Cargo package, Nix flake (package + devShell with the wlroots
