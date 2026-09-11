@@ -2,6 +2,15 @@
 
 Hand-written, newest first. Not tied to version numbers.
 
+## Delivery
+
+- Protected `main`: PRs required, CI (lint-and-security/test/nix) must be green,
+  linear history, no force-push or deletion.
+- CODEOWNERS assigns the sole maintainer for auto-requested review.
+- Dependabot auto-merge workflow: enables auto-merge on green for patch, minor,
+  and development bumps plus all github-actions updates; never checks out PR
+  code; major production bumps stay manual.
+
 ## Scaffold
 
 - Repo scaffold: Cargo package, Nix flake (package + devShell with the wlroots

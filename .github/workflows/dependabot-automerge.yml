@@ -1,0 +1,41 @@
+name: Dependabot auto-merge
+
+# Home-rolled auto-merge for Dependabot PRs. This runs with a write token via
+# pull_request_target and NEVER checks out or executes PR code: it only reads
+# Dependabot's own metadata and calls the GitHub API. Auto-merge is enabled for
+# patch, minor, and development-dependency bumps plus all github-actions
+# updates; major production bumps are left for manual review. The merge itself
+# still waits on branch protection, so nothing lands until CI is green.
+
+on:
+  pull_request_target
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  automerge:
+    if: ${{ github.actor == 'dependabot[bot]' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Fetch Dependabot metadata
+        id: meta
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+
+      - name: Enable auto-merge for allowed updates
+        if: >-
+          steps.meta.outputs.update-type == 'version-update:semver-patch' ||
+          steps.meta.outputs.update-type == 'version-update:semver-minor' ||
+          steps.meta.outputs.dependency-type == 'direct:development' ||
+          steps.meta.outputs.package-ecosystem == 'github_actions'
+        run: gh pr merge --auto --squash "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
