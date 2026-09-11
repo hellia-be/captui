@@ -180,8 +180,10 @@ impl App {
                 Vec::new()
             }
         };
-        self.audio_options = std::iter::once(None)
-            .chain(sources.into_iter().map(Some))
+        self.audio_options = sources
+            .into_iter()
+            .map(Some)
+            .chain(std::iter::once(None))
             .collect();
         self.audio_list.select(Some(0));
         self.screen = Screen::Audio;

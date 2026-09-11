@@ -11,6 +11,15 @@ Hand-written, newest first. Not tied to version numbers.
   and development bumps plus all github-actions updates; never checks out PR
   code; major production bumps stay manual.
 
+## Fixes
+
+- Audio was recorded muted: the audio node was passed as `-a <node>`, but
+  wf-recorder's `-a`/`--audio` takes an optional argument that getopt only binds
+  when attached, so it silently fell back to the default source (the mic). Pass
+  it as `--audio=<node>` instead.
+- Added a "System audio (all)" option that targets the default sink's monitor,
+  preselected, so capturing everything playing is one keypress.
+
 ## Features
 
 - Start/stop recording: after the audio pick, captui spawns wf-recorder to a

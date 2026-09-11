@@ -15,6 +15,7 @@ pub fn parse_pw_dump(json: &str) -> Vec<AudioSource> {
         return Vec::new();
     };
 
+    let default_sink = default_sink_name(objects);
     let mut mics = Vec::new();
     let mut monitors = Vec::new();
     for obj in objects {
@@ -34,7 +35,7 @@ pub fn parse_pw_dump(json: &str) -> Vec<AudioSource> {
                 description: description.to_string(),
                 is_monitor: false,
             });
-        } else if class == "Audio/Sink" {
+        } else if class == "Audio/Sink" && default_sink.as_deref() != Some(name) {
             monitors.push(AudioSource {
                 node_name: format!("{name}.monitor"),
                 description: format!("Monitor of {description}"),
@@ -45,8 +46,37 @@ pub fn parse_pw_dump(json: &str) -> Vec<AudioSource> {
 
     mics.sort_by(|a, b| a.description.cmp(&b.description));
     monitors.sort_by(|a, b| a.description.cmp(&b.description));
-    mics.extend(monitors);
-    mics
+
+    let mut sources = Vec::new();
+    if let Some(sink) = default_sink {
+        sources.push(AudioSource {
+            node_name: format!("{sink}.monitor"),
+            description: "System audio (all)".to_string(),
+            is_monitor: true,
+        });
+    }
+    sources.extend(mics);
+    sources.extend(monitors);
+    sources
+}
+
+fn default_sink_name(objects: &[serde_json::Value]) -> Option<String> {
+    for obj in objects {
+        let Some(entries) = obj["metadata"].as_array() else {
+            continue;
+        };
+        for entry in entries {
+            if entry["key"] == "default.audio.sink" {
+                if let Some(name) = entry["value"]["name"].as_str() {
+                    return Some(name.to_string());
+                }
+                if let Some(name) = entry["value"].as_str() {
+                    return Some(name.to_string());
+                }
+            }
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -104,5 +134,49 @@ mod tests {
     fn bad_json_is_empty() {
         assert!(parse_pw_dump("not json").is_empty());
         assert!(parse_pw_dump("{}").is_empty());
+    }
+
+    #[test]
+    fn default_sink_becomes_system_audio_all_without_duplicate() {
+        let json = r#"[
+          { "type": "PipeWire:Interface:Metadata",
+            "props": { "metadata.name": "default" },
+            "metadata": [
+              { "key": "default.audio.sink", "value": { "name": "alsa_output.speakers" } }
+            ] },
+          { "info": { "props": {
+            "media.class": "Audio/Sink",
+            "node.name": "alsa_output.speakers",
+            "node.description": "Speakers" } } },
+          { "info": { "props": {
+            "media.class": "Audio/Sink",
+            "node.name": "hdmi.tv",
+            "node.description": "TV" } } },
+          { "info": { "props": {
+            "media.class": "Audio/Source",
+            "node.name": "mic",
+            "node.description": "Mic" } } }
+        ]"#;
+        let sources = parse_pw_dump(json);
+        assert_eq!(
+            sources,
+            vec![
+                AudioSource {
+                    node_name: "alsa_output.speakers.monitor".into(),
+                    description: "System audio (all)".into(),
+                    is_monitor: true,
+                },
+                AudioSource {
+                    node_name: "mic".into(),
+                    description: "Mic".into(),
+                    is_monitor: false,
+                },
+                AudioSource {
+                    node_name: "hdmi.tv.monitor".into(),
+                    description: "Monitor of TV".into(),
+                    is_monitor: true,
+                },
+            ]
+        );
     }
 }
