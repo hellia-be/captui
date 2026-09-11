@@ -1,5 +1,8 @@
 [advisories]
 version = 2
+# Only fail on unmaintained crates we directly depend on; deep transitive ones
+# (e.g. paste via ratatui) are out of our control and have no safe upgrade.
+unmaintained = "workspace"
 
 [licenses]
 version = 2
