@@ -21,6 +21,8 @@ identify = ["dep:smithay-client-toolkit"]
 [dependencies]
 anyhow = "1"
 crossterm = "0.29"
+directories = "6"
+nix = { version = "0.31", features = ["signal", "process"] }
 ratatui = "0.30"
 serde_json = "1"
 smithay-client-toolkit = { version = "0.21", optional = true, default-features = false }

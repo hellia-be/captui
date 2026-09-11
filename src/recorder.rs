@@ -1,19 +1,13 @@
-//! Recorder command construction and output naming. Pure/IO-free for CI; the
-//! actual process spawn and SIGINT stop live in the (IO) app layer. wf-recorder
-//! must be stopped with SIGINT so it finalizes the container.
+//! wf-recorder argv and output naming. See docs/DESIGN-NOTES.md.
 
 use crate::sources::Source;
 
-/// Capture mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
-    /// Screen + audio to a container (default).
     AudioVideo,
-    /// Audio only: the lean path when only a Whisper transcript is wanted.
     AudioOnly,
 }
 
-/// Default output file extension for a mode.
 pub fn extension(mode: Mode) -> &'static str {
     match mode {
         Mode::AudioVideo => "mkv",
@@ -21,16 +15,40 @@ pub fn extension(mode: Mode) -> &'static str {
     }
 }
 
-/// Build the wf-recorder argv for an A/V capture of `source`, recording the
-/// PipeWire node `audio_src` and writing to `out`.
-pub fn wf_recorder_argv(source: &Source, audio_src: &str, out: &str) -> Vec<String> {
+pub fn wf_recorder_argv(source: &Source, audio: Option<&str>, out: &str) -> Vec<String> {
     let mut argv = vec!["wf-recorder".to_string()];
     argv.extend(source.wf_args());
-    argv.push("-a".into());
-    argv.push(audio_src.into());
+    if let Some(a) = audio {
+        argv.push("-a".into());
+        argv.push(a.into());
+    }
     argv.push("-f".into());
     argv.push(out.into());
     argv
+}
+
+pub fn timestamped_name(unix_secs: u64, ext: &str) -> String {
+    let (y, m, d) = civil_from_days((unix_secs / 86400) as i64);
+    let s = unix_secs % 86400;
+    format!(
+        "captui-{y:04}{m:02}{d:02}-{:02}{:02}{:02}.{ext}",
+        s / 3600,
+        (s % 3600) / 60,
+        s % 60
+    )
+}
+
+fn civil_from_days(z: i64) -> (i64, u32, u32) {
+    let z = z + 719468;
+    let era = if z >= 0 { z } else { z - 146096 } / 146097;
+    let doe = z - era * 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    (y + i64::from(m <= 2), m as u32, d)
 }
 
 #[cfg(test)]
@@ -44,9 +62,9 @@ mod tests {
     }
 
     #[test]
-    fn builds_wf_recorder_argv() {
+    fn builds_argv_with_audio() {
         let s = Source::Display("HDMI-A-1".into());
-        let argv = wf_recorder_argv(&s, "alsa_output.monitor", "/tmp/cap.mkv");
+        let argv = wf_recorder_argv(&s, Some("alsa_output.monitor"), "/tmp/cap.mkv");
         assert_eq!(
             argv,
             vec![
@@ -58,6 +76,26 @@ mod tests {
                 "-f",
                 "/tmp/cap.mkv"
             ]
+        );
+    }
+
+    #[test]
+    fn builds_argv_without_audio() {
+        let s = Source::Region("0,0 640x480".into());
+        let argv = wf_recorder_argv(&s, None, "/tmp/cap.mkv");
+        assert_eq!(
+            argv,
+            vec!["wf-recorder", "-g", "0,0 640x480", "-f", "/tmp/cap.mkv"]
+        );
+    }
+
+    #[test]
+    fn timestamps_are_utc_civil() {
+        assert_eq!(timestamped_name(0, "mkv"), "captui-19700101-000000.mkv");
+        assert_eq!(timestamped_name(86400, "mkv"), "captui-19700102-000000.mkv");
+        assert_eq!(
+            timestamped_name(1_700_000_000, "flac"),
+            "captui-20231114-221320.flac"
         );
     }
 }

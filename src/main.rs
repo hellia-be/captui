@@ -7,8 +7,9 @@
 // version. See the LICENSE file for details.
 
 use std::io;
-use std::process::Command;
-use std::time::Duration;
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, bail, Context, Result};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
@@ -16,10 +17,14 @@ use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
+use directories::UserDirs;
+use nix::sys::signal::{self, Signal};
+use nix::unistd::Pid;
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, HighlightSpacing, List, ListItem, ListState, Paragraph};
 
 use captui::audio::{parse_pw_dump, AudioSource};
+use captui::recorder::{extension, timestamped_name, wf_recorder_argv, Mode};
 use captui::sources::{
     layout_hints, parse_geometry, parse_wlr_randr, region, sort_reading_order, Output, Source,
 };
@@ -56,14 +61,49 @@ fn enumerate_audio() -> Result<Vec<AudioSource>> {
     Ok(parse_pw_dump(&String::from_utf8_lossy(&out.stdout)))
 }
 
-struct Selection {
-    source: Source,
-    audio: Option<String>,
+fn output_path() -> Result<PathBuf> {
+    let base = UserDirs::new()
+        .and_then(|u| u.video_dir().map(Path::to_path_buf))
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Videos")))
+        .ok_or_else(|| anyhow!("could not determine a video directory"))?;
+    let dir = base.join("captures");
+    std::fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or_default();
+    Ok(dir.join(timestamped_name(secs, extension(Mode::AudioVideo))))
+}
+
+fn spawn_recorder(source: &Source, audio: Option<&str>, out: &Path) -> Result<Child> {
+    let argv = wf_recorder_argv(source, audio, &out.to_string_lossy());
+    Command::new(&argv[0])
+        .args(&argv[1..])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .with_context(|| format!("could not spawn {} (is it installed?)", argv[0]))
+}
+
+fn stop_recorder(child: &mut Child) -> Result<()> {
+    let _ = signal::kill(Pid::from_raw(child.id() as i32), Signal::SIGINT);
+    child
+        .wait()
+        .context("waiting for wf-recorder to finalize")?;
+    Ok(())
+}
+
+struct Rec {
+    child: Child,
+    path: PathBuf,
+    stopped: bool,
 }
 
 enum Screen {
     Source,
     Audio,
+    Recording,
 }
 
 struct App {
@@ -73,7 +113,7 @@ struct App {
     audio_options: Vec<Option<AudioSource>>,
     audio_list: ListState,
     screen: Screen,
-    result: Option<Selection>,
+    recording: Option<Rec>,
     status: Option<String>,
 }
 
@@ -90,15 +130,15 @@ impl App {
             audio_options: Vec::new(),
             audio_list: ListState::default(),
             screen: Screen::Source,
-            result: None,
+            recording: None,
             status: None,
         }
     }
 
     fn active_list(&mut self) -> (&mut ListState, usize) {
         match self.screen {
-            Screen::Source => (&mut self.source_list, self.displays.len()),
             Screen::Audio => (&mut self.audio_list, self.audio_options.len()),
+            _ => (&mut self.source_list, self.displays.len()),
         }
     }
 
@@ -153,18 +193,58 @@ impl App {
         self.screen = Screen::Source;
     }
 
-    fn confirm_audio(&mut self) {
-        let choice = self
+    fn start_recording(&mut self) {
+        let audio = match self
             .audio_list
             .selected()
-            .and_then(|i| self.audio_options.get(i));
-        let audio = match choice {
-            Some(c) => c.as_ref().map(|a| a.node_name.clone()),
+            .and_then(|i| self.audio_options.get(i))
+        {
+            Some(choice) => choice.as_ref().map(|a| a.node_name.clone()),
             None => return,
         };
-        if let Some(source) = self.pending_source.take() {
-            self.result = Some(Selection { source, audio });
+        let Some(source) = self.pending_source.take() else {
+            return;
+        };
+        let path = match output_path() {
+            Ok(p) => p,
+            Err(e) => {
+                self.pending_source = Some(source);
+                self.status = Some(format!("{e:#}"));
+                return;
+            }
+        };
+        match spawn_recorder(&source, audio.as_deref(), &path) {
+            Ok(child) => {
+                self.recording = Some(Rec {
+                    child,
+                    path,
+                    stopped: false,
+                });
+                self.status = None;
+                self.screen = Screen::Recording;
+            }
+            Err(e) => {
+                self.pending_source = Some(source);
+                self.status = Some(format!("{e:#}"));
+            }
         }
+    }
+
+    fn stop(&mut self) {
+        let Some(rec) = self.recording.as_mut() else {
+            return;
+        };
+        if rec.stopped {
+            return;
+        }
+        let msg = match stop_recorder(&mut rec.child) {
+            Ok(()) => {
+                rec.stopped = true;
+                format!("saved: {}", rec.path.display())
+            }
+            Err(e) => format!("stop failed: {e:#}"),
+        };
+        self.status = Some(msg);
     }
 }
 
@@ -182,15 +262,8 @@ fn main() -> Result<()> {
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
 
-    if let Some(sel) = res?.result {
-        match sel.source {
-            Source::Display(name) => println!("source: display {name}"),
-            Source::Region(geom) => println!("source: region {geom}"),
-        }
-        match sel.audio {
-            Some(name) => println!("audio: {name}"),
-            None => println!("audio: none (silent)"),
-        }
+    if let Some(rec) = res?.recording {
+        println!("recording saved: {}", rec.path.display());
     }
     Ok(())
 }
@@ -234,8 +307,13 @@ fn run(
                 KeyCode::Esc => app.back_to_source(),
                 KeyCode::Down | KeyCode::Char('j') => app.move_by(1),
                 KeyCode::Up | KeyCode::Char('k') => app.move_by(-1),
-                KeyCode::Enter => {
-                    app.confirm_audio();
+                KeyCode::Enter => app.start_recording(),
+                _ => {}
+            },
+            Screen::Recording => match k.code {
+                KeyCode::Char('s') => app.stop(),
+                KeyCode::Char('q') | KeyCode::Esc => {
+                    app.stop();
                     return Ok(app);
                 }
                 _ => {}
@@ -301,6 +379,7 @@ fn draw(f: &mut Frame, app: &mut App, error: Option<&str>) {
     match app.screen {
         Screen::Source => draw_source(f, app, error, chunks[0]),
         Screen::Audio => draw_audio(f, app, chunks[0]),
+        Screen::Recording => draw_recording(f, app, chunks[0]),
     }
     draw_footer(f, app, chunks[1]);
 }
@@ -354,10 +433,31 @@ fn draw_audio(f: &mut Frame, app: &mut App, area: Rect) {
     f.render_stateful_widget(list, area, &mut app.audio_list);
 }
 
+fn draw_recording(f: &mut Frame, app: &App, area: Rect) {
+    let block = Block::default()
+        .title(" captui - recording ")
+        .borders(Borders::ALL);
+    let body = match &app.recording {
+        Some(rec) if rec.stopped => Text::from(vec![
+            Line::from("■ stopped".green()),
+            Line::from(format!("saved: {}", rec.path.display())),
+        ]),
+        Some(rec) => Text::from(vec![
+            Line::from("● REC".red().bold()),
+            Line::from(format!("file: {}", rec.path.display())),
+        ]),
+        None => Text::from("not recording"),
+    };
+    f.render_widget(Paragraph::new(body).block(block), area);
+}
+
 fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
+    let stopped = matches!(&app.recording, Some(r) if r.stopped);
     let hint = match app.screen {
         Screen::Source => " up/down move  i identify  enter display  r region  q quit ",
         Screen::Audio => " up/down move  enter select  esc back  q quit ",
+        Screen::Recording if stopped => " q quit ",
+        Screen::Recording => " s stop  q stop and quit ",
     };
     let footer = match &app.status {
         Some(s) => Paragraph::new(format!(" {s} ")).style(Style::new().yellow()),
