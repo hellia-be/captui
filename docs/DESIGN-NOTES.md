@@ -11,6 +11,13 @@ A window is captured as a fixed region derived from the compositor's reported
 geometry (Umbriel/Niri IPC); it does not follow the window if it moves. Multiple
 displays into one file is not native to wf-recorder (one output per instance).
 
+Displays are enumerated by parsing `wlr-randr`'s plain-text output
+(`parse_wlr_randr`): an output header sits at column 0 as `NAME "DESCRIPTION"`,
+its indented properties follow, and only `Enabled: yes|no` is read. The parse is
+pure so CI can test it; the picker filters to enabled outputs, since a disabled
+output has no framebuffer to capture. Running wlr-randr is IO and lives in the
+app layer (src/main.rs), not the CI-tested lib.
+
 ## Recorder (src/recorder.rs)
 
 Pure argv builders and output naming, kept IO-free so they are testable in CI.

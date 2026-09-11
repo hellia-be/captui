@@ -11,6 +11,12 @@ Hand-written, newest first. Not tied to version numbers.
   and development bumps plus all github-actions updates; never checks out PR
   code; major production bumps stay manual.
 
+## Features
+
+- Source picker: enumerate displays from wlr-randr and select one in a
+  navigable ratatui list (ROADMAP P1 item 1). Pure `parse_wlr_randr` parser is
+  unit-tested; the picker filters to enabled outputs.
+
 ## Scaffold
 
 - Repo scaffold: Cargo package, Nix flake (package + devShell with the wlroots
