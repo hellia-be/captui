@@ -32,7 +32,7 @@ fn main() -> Result<()> {
     res
 }
 
-fn run<B: Backend>(terminal: &mut Terminal<B>) -> Result<()> {
+fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
     loop {
         terminal.draw(|f| {
             let block = Block::default().title(" captui ").borders(Borders::ALL);
