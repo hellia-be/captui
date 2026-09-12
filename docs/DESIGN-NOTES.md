@@ -84,6 +84,12 @@ The A/V mode records screen + a PipeWire source to mkv; the audio-only mode
 writes flac for a lean Whisper transcript. `wf_recorder_argv` takes an optional
 audio node (omitting `--audio` when the user picked "No audio").
 
+The recording screen shows a live status panel: an elapsed timer and the growing
+output file size. The timer runs off an `Instant` captured at spawn and freezes
+at the value sampled on stop; the size is read from the file's metadata each
+draw (the loop redraws ~5x/s). Duration and byte formatting are pure helpers in
+src/format.rs, unit-tested in CI.
+
 Video quality is set explicitly instead of relying on wf-recorder's defaults,
 which look soft (especially screen text): software libx264 at `crf=18` (visually
 near-lossless, sharper than the ~23 default) with `preset=fast` to stay

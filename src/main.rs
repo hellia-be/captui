@@ -9,7 +9,7 @@
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, bail, Context, Result};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
@@ -24,6 +24,7 @@ use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, HighlightSpacing, List, ListItem, ListState, Paragraph};
 
 use captui::audio::{parse_pw_dump, AudioSource};
+use captui::format::{format_duration, format_size};
 use captui::recorder::{extension, timestamped_name, wf_recorder_argv, Mode};
 use captui::sources::{
     layout_hints, parse_geometry, parse_wlr_randr, region, sort_reading_order, Output, Source,
@@ -98,6 +99,18 @@ struct Rec {
     child: Child,
     path: PathBuf,
     stopped: bool,
+    started: Instant,
+    final_elapsed: Option<Duration>,
+}
+
+impl Rec {
+    fn elapsed(&self) -> Duration {
+        self.final_elapsed.unwrap_or_else(|| self.started.elapsed())
+    }
+
+    fn size_bytes(&self) -> u64 {
+        std::fs::metadata(&self.path).map(|m| m.len()).unwrap_or(0)
+    }
 }
 
 enum Screen {
@@ -221,6 +234,8 @@ impl App {
                     child,
                     path,
                     stopped: false,
+                    started: Instant::now(),
+                    final_elapsed: None,
                 });
                 self.status = None;
                 self.screen = Screen::Recording;
@@ -239,6 +254,7 @@ impl App {
         if rec.stopped {
             return;
         }
+        rec.final_elapsed = Some(rec.started.elapsed());
         let msg = match stop_recorder(&mut rec.child) {
             Ok(()) => {
                 rec.stopped = true;
@@ -440,14 +456,20 @@ fn draw_recording(f: &mut Frame, app: &App, area: Rect) {
         .title(" captui - recording ")
         .borders(Borders::ALL);
     let body = match &app.recording {
-        Some(rec) if rec.stopped => Text::from(vec![
-            Line::from("■ stopped".green()),
-            Line::from(format!("saved: {}", rec.path.display())),
-        ]),
-        Some(rec) => Text::from(vec![
-            Line::from("● REC".red().bold()),
-            Line::from(format!("file: {}", rec.path.display())),
-        ]),
+        Some(rec) => {
+            let timer = format_duration(rec.elapsed().as_secs());
+            let size = format_size(rec.size_bytes());
+            let head = if rec.stopped {
+                Line::from(vec!["■ stopped  ".green(), timer.into()])
+            } else {
+                Line::from(vec!["● REC  ".red().bold(), timer.into()])
+            };
+            Text::from(vec![
+                head,
+                Line::from(format!("size: {size}")),
+                Line::from(format!("file: {}", rec.path.display())),
+            ])
+        }
         None => Text::from("not recording"),
     };
     f.render_widget(Paragraph::new(body).block(block), area);

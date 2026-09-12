@@ -11,6 +11,12 @@ Hand-written, newest first. Not tied to version numbers.
   and development bumps plus all github-actions updates; never checks out PR
   code; major production bumps stay manual.
 
+## Features
+
+- Recording status panel: the recording screen now shows a live elapsed timer
+  and the growing output file size; the timer freezes at the final duration when
+  stopped.
+
 ## Fixes
 
 - Better video quality: encode with libx264 at `crf=18`, `preset=fast` instead
