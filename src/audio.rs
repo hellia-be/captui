@@ -15,7 +15,8 @@ pub fn parse_pw_dump(json: &str) -> Vec<AudioSource> {
         return Vec::new();
     };
 
-    let default_sink = default_sink_name(objects);
+    let default_sink = default_meta(objects, "default.audio.sink");
+    let default_source = default_meta(objects, "default.audio.source");
     let mut mics = Vec::new();
     let mut monitors = Vec::new();
     for obj in objects {
@@ -29,10 +30,10 @@ pub fn parse_pw_dump(json: &str) -> Vec<AudioSource> {
             .filter(|s| !s.is_empty())
             .unwrap_or(name);
         let class = props["media.class"].as_str().unwrap_or("");
-        if class.starts_with("Audio/Source") {
+        if class.starts_with("Audio/Source") && default_source.as_deref() != Some(name) {
             mics.push(AudioSource {
                 node_name: name.to_string(),
-                description: description.to_string(),
+                description: format!("Mic: {description}"),
                 is_monitor: false,
             });
         } else if class == "Audio/Sink" && default_sink.as_deref() != Some(name) {
@@ -55,18 +56,25 @@ pub fn parse_pw_dump(json: &str) -> Vec<AudioSource> {
             is_monitor: true,
         });
     }
+    if let Some(source) = default_source {
+        sources.push(AudioSource {
+            node_name: source,
+            description: "Microphone (default)".to_string(),
+            is_monitor: false,
+        });
+    }
     sources.extend(mics);
     sources.extend(monitors);
     sources
 }
 
-fn default_sink_name(objects: &[serde_json::Value]) -> Option<String> {
+fn default_meta(objects: &[serde_json::Value], key: &str) -> Option<String> {
     for obj in objects {
         let Some(entries) = obj["metadata"].as_array() else {
             continue;
         };
         for entry in entries {
-            if entry["key"] == "default.audio.sink" {
+            if entry["key"] == key {
                 if let Some(name) = entry["value"]["name"].as_str() {
                     return Some(name.to_string());
                 }
@@ -108,7 +116,7 @@ mod tests {
             vec![
                 AudioSource {
                     node_name: "alsa_input.pci-0000_0c_00.4.analog-stereo".into(),
-                    description: "Built-in Microphone".into(),
+                    description: "Mic: Built-in Microphone".into(),
                     is_monitor: false,
                 },
                 AudioSource {
@@ -127,7 +135,37 @@ mod tests {
             "node.name": "usb_mic" } } } ]"#;
         let sources = parse_pw_dump(json);
         assert_eq!(sources.len(), 1);
-        assert_eq!(sources[0].description, "usb_mic");
+        assert_eq!(sources[0].description, "Mic: usb_mic");
+    }
+
+    #[test]
+    fn default_source_becomes_default_microphone_without_duplicate() {
+        let json = r#"[
+          { "metadata": [
+              { "key": "default.audio.source", "value": { "name": "mic_a" } } ] },
+          { "info": { "props": {
+            "media.class": "Audio/Source", "node.name": "mic_a",
+            "node.description": "Headset" } } },
+          { "info": { "props": {
+            "media.class": "Audio/Source", "node.name": "mic_b",
+            "node.description": "Webcam" } } }
+        ]"#;
+        let sources = parse_pw_dump(json);
+        assert_eq!(
+            sources,
+            vec![
+                AudioSource {
+                    node_name: "mic_a".into(),
+                    description: "Microphone (default)".into(),
+                    is_monitor: false,
+                },
+                AudioSource {
+                    node_name: "mic_b".into(),
+                    description: "Mic: Webcam".into(),
+                    is_monitor: false,
+                },
+            ]
+        );
     }
 
     #[test]
@@ -168,7 +206,7 @@ mod tests {
                 },
                 AudioSource {
                     node_name: "mic".into(),
-                    description: "Mic".into(),
+                    description: "Mic: Mic".into(),
                     is_monitor: false,
                 },
                 AudioSource {
