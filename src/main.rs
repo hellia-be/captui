@@ -127,7 +127,8 @@ fn capture_stderr(child: &mut Child) -> Arc<Mutex<String>> {
 }
 
 fn stderr_tail(buf: &Arc<Mutex<String>>) -> String {
-    buf.lock()
+    let line = buf
+        .lock()
         .ok()
         .and_then(|b| {
             b.lines()
@@ -135,7 +136,11 @@ fn stderr_tail(buf: &Arc<Mutex<String>>) -> String {
                 .find(|l| !l.trim().is_empty())
                 .map(str::to_string)
         })
-        .unwrap_or_else(|| "no output produced".into())
+        .unwrap_or_else(|| "no output produced".into());
+    match line.char_indices().nth(200) {
+        Some((cut, _)) => format!("{}…", &line[..cut]),
+        None => line,
+    }
 }
 
 fn spawn_audio_recorder(node: &str, out: &Path) -> Result<Child> {
@@ -154,8 +159,9 @@ fn spawn_recorder(
     source: &Source,
     audio: Option<&str>,
     out: &Path,
+    no_hw: bool,
 ) -> Result<Child> {
-    let argv = backend.argv(source, audio, &out.to_string_lossy());
+    let argv = backend.argv(source, audio, &out.to_string_lossy(), no_hw);
     Command::new(&argv[0])
         .args(&argv[1..])
         .stdin(Stdio::null())
@@ -583,7 +589,13 @@ impl App {
         } else {
             let backend = Backend::from_config(self.config.backend.as_deref());
             match self.pending_source.as_ref() {
-                Some(source) => spawn_recorder(backend, source, audio_node.as_deref(), &path),
+                Some(source) => spawn_recorder(
+                    backend,
+                    source,
+                    audio_node.as_deref(),
+                    &path,
+                    self.config.no_hw,
+                ),
                 None => return,
             }
         };

@@ -55,6 +55,10 @@ Hand-written, newest first. Not tied to version numbers.
 
 ## Fixes
 
+- wl-screenrec `no_hw` option and shorter error display: `no_hw = true` in the
+  config forces software encode (`--no-hw`), and the failure message shown in the
+  UI is truncated. wl-screenrec's hardware path can't negotiate a capture format
+  on NVIDIA; those GPUs should use the default wf-recorder. (Documented.)
 - Recorder failures are no longer silent: captui captured and nulled the
   recorder's stderr, so a recorder that crashed or produced no file left a fake
   running timer and no saved capture. Now the recorder's stderr is captured, an

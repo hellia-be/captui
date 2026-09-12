@@ -44,12 +44,17 @@ Optional `~/.config/captui/config.toml`, all keys optional:
     audio_input = "alsa_input.usb-Razer_..."
     transcribe_command = "transcribe-remote {}"   # {} = recording path
     backend = "wf-recorder"             # or "wl-screenrec" for hardware (VAAPI) encode
+    no_hw = false                       # wl-screenrec only: true forces software encode
 
 `audio_output` / `audio_input` are PipeWire node names (as shown by
 `pactl list short sources`) to preselect in the pickers. `transcribe_command`, if
 set, adds a `t` action on the stopped recording screen that runs the command on
 the file (`{}` is the path, else it is appended). A missing or malformed file
 falls back to built-in defaults.
+
+The `wl-screenrec` backend needs a working VAAPI encoder (AMD/Intel). On NVIDIA
+its hardware capture-format negotiation fails, so use the default `wf-recorder`
+(software libx264) or try `no_hw = true`.
 
 ## Getting started
 
