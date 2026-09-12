@@ -9,6 +9,7 @@ pub struct Config {
     pub container: Option<String>,
     pub audio_output: Option<String>,
     pub audio_input: Option<String>,
+    pub transcribe_command: Option<String>,
 }
 
 pub fn parse_config(text: &str) -> Config {
@@ -27,6 +28,7 @@ mod tests {
             container = "mp4"
             audio_output = "alsa_output.speakers.monitor"
             audio_input = "alsa_input.mic"
+            transcribe_command = "transcribe-remote {}"
         "#,
         );
         assert_eq!(cfg.output_dir.as_deref(), Some("~/rec"));
@@ -36,6 +38,10 @@ mod tests {
             Some("alsa_output.speakers.monitor")
         );
         assert_eq!(cfg.audio_input.as_deref(), Some("alsa_input.mic"));
+        assert_eq!(
+            cfg.transcribe_command.as_deref(),
+            Some("transcribe-remote {}")
+        );
     }
 
     #[test]

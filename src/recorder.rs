@@ -36,6 +36,24 @@ pub fn wf_recorder_argv(source: &Source, audio: Option<&str>, out: &str) -> Vec<
     argv
 }
 
+pub fn transcribe_argv(template: &str, file: &str) -> Option<Vec<String>> {
+    let mut argv: Vec<String> = template.split_whitespace().map(String::from).collect();
+    if argv.is_empty() {
+        return None;
+    }
+    let mut replaced = false;
+    for arg in &mut argv {
+        if arg.contains("{}") {
+            *arg = arg.replace("{}", file);
+            replaced = true;
+        }
+    }
+    if !replaced {
+        argv.push(file.to_string());
+    }
+    Some(argv)
+}
+
 pub fn timestamped_name(unix_secs: u64, ext: &str) -> String {
     let (y, m, d) = civil_from_days((unix_secs / 86400) as i64);
     let s = unix_secs % 86400;
@@ -113,6 +131,19 @@ mod tests {
                 "/tmp/cap.mkv"
             ]
         );
+    }
+
+    #[test]
+    fn transcribe_argv_substitutes_or_appends() {
+        assert_eq!(
+            transcribe_argv("transcribe-remote", "/a.mkv"),
+            Some(vec!["transcribe-remote".into(), "/a.mkv".into()])
+        );
+        assert_eq!(
+            transcribe_argv("t {} --fast", "/a.mkv"),
+            Some(vec!["t".into(), "/a.mkv".into(), "--fast".into()])
+        );
+        assert_eq!(transcribe_argv("   ", "/a.mkv"), None);
     }
 
     #[test]

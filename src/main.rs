@@ -33,7 +33,7 @@ use captui::audio::{
 use captui::config::{parse_config, Config};
 use captui::format::{format_duration, format_size};
 use captui::meter::{meter_bar, samples_peak};
-use captui::recorder::{extension, timestamped_name, wf_recorder_argv, Mode};
+use captui::recorder::{extension, timestamped_name, transcribe_argv, wf_recorder_argv, Mode};
 use captui::sources::{
     layout_hints, parse_geometry, parse_wlr_randr, region, sort_reading_order, Output, Source,
 };
@@ -347,6 +347,7 @@ struct App {
     recording: Option<Rec>,
     status: Option<String>,
     config: Config,
+    transcribe: bool,
 }
 
 impl App {
@@ -369,7 +370,17 @@ impl App {
             recording: None,
             status: None,
             config,
+            transcribe: false,
         }
+    }
+
+    fn request_transcribe(&mut self) -> bool {
+        let ready = self.config.transcribe_command.is_some()
+            && matches!(&self.recording, Some(r) if r.stopped);
+        if ready {
+            self.transcribe = true;
+        }
+        ready
     }
 
     fn active_list(&mut self) -> (&mut ListState, usize) {
@@ -628,10 +639,29 @@ fn main() -> Result<()> {
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
 
-    if let Some(rec) = res?.recording {
+    let app = res?;
+    if let Some(rec) = &app.recording {
         println!("recording saved: {}", rec.path.display());
+        if app.transcribe {
+            run_transcribe(&app.config, &rec.path);
+        }
     }
     Ok(())
+}
+
+fn run_transcribe(cfg: &Config, path: &Path) {
+    let Some(template) = &cfg.transcribe_command else {
+        return;
+    };
+    let Some(argv) = transcribe_argv(template, &path.to_string_lossy()) else {
+        return;
+    };
+    println!("transcribing: {}", argv.join(" "));
+    match Command::new(&argv[0]).args(&argv[1..]).status() {
+        Ok(s) if s.success() => {}
+        Ok(s) => eprintln!("transcribe command exited with {s}"),
+        Err(e) => eprintln!("could not run transcribe command: {e}"),
+    }
 }
 
 fn run(
@@ -692,6 +722,11 @@ fn run(
                 KeyCode::Down | KeyCode::Char('j') => app.focus_source(1),
                 KeyCode::Left | KeyCode::Char('h') => app.adjust_volume(-5),
                 KeyCode::Right | KeyCode::Char('l') => app.adjust_volume(5),
+                KeyCode::Char('t') => {
+                    if app.request_transcribe() {
+                        return Ok(app);
+                    }
+                }
                 KeyCode::Char('q') | KeyCode::Esc => {
                     app.stop();
                     return Ok(app);
@@ -862,6 +897,9 @@ fn draw_recording(f: &mut Frame, app: &App, area: Rect) {
                 )));
             }
             lines.push(Line::from(format!("file: {}", rec.path.display())));
+            if rec.stopped && app.config.transcribe_command.is_some() {
+                lines.push(Line::from("press t to transcribe".cyan()));
+            }
             Text::from(lines)
         }
         None => Text::from("not recording"),
@@ -878,7 +916,13 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
         }
         Screen::AudioOutput => " up/down move  enter next (input)  esc back  q quit ",
         Screen::AudioInput => " up/down move  enter record  esc back  q quit ",
-        Screen::Recording if stopped => " q quit ",
+        Screen::Recording if stopped => {
+            if app.config.transcribe_command.is_some() {
+                " t transcribe  q quit "
+            } else {
+                " q quit "
+            }
+        }
         Screen::Recording if adjustable => {
             " s stop  up/down focus  left/right volume  q stop and quit "
         }

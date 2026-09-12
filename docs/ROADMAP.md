@@ -13,5 +13,4 @@ All P1 items are done. See docs/CHANGELOG.md.
    a compositor that reports window geometry over IPC; Umbriel's `msg` is
    action-only (no query), so it needs an Umbriel query action first. The captui
    side is a pluggable WindowProvider once a backend can supply geometry.
-2. Whisper handoff (configured transcription command after stop).
-3. wl-screenrec backend option (hardware encode).
+2. wl-screenrec backend option (hardware encode).
