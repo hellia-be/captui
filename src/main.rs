@@ -428,6 +428,15 @@ impl App {
         self.enter_output();
     }
 
+    fn restart(&mut self) {
+        self.recording = None;
+        self.pending_source = None;
+        self.chosen_output = None;
+        self.audio_only = false;
+        self.status = None;
+        self.screen = Screen::Source;
+    }
+
     fn enter_output(&mut self) {
         self.status = None;
         let sources = match enumerate_audio() {
@@ -727,6 +736,11 @@ fn run(
                         return Ok(app);
                     }
                 }
+                KeyCode::Char('n') => {
+                    if matches!(&app.recording, Some(r) if r.stopped) {
+                        app.restart();
+                    }
+                }
                 KeyCode::Char('q') | KeyCode::Esc => {
                     app.stop();
                     return Ok(app);
@@ -918,9 +932,9 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
         Screen::AudioInput => " up/down move  enter record  esc back  q quit ",
         Screen::Recording if stopped => {
             if app.config.transcribe_command.is_some() {
-                " t transcribe  q quit "
+                " n new recording  t transcribe  q quit "
             } else {
-                " q quit "
+                " n new recording  q quit "
             }
         }
         Screen::Recording if adjustable => {
