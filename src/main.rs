@@ -334,10 +334,15 @@ impl App {
             .map(Some)
             .chain(std::iter::once(None))
             .collect();
-        // Default to system audio on, mic off.
+        // Default to system audio, and to the default mic if there is one.
         self.output_list.select(Some(0));
-        self.input_list
-            .select(Some(self.input_options.len().saturating_sub(1)));
+        let default_mic = self.input_options.iter().position(|o| {
+            o.as_ref()
+                .is_some_and(|a| a.description.ends_with("(default)"))
+        });
+        self.input_list.select(Some(
+            default_mic.unwrap_or(self.input_options.len().saturating_sub(1)),
+        ));
         self.screen = Screen::AudioOutput;
     }
 
