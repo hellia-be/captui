@@ -20,6 +20,7 @@
           pipewire # pw-record, pw-dump
           wireplumber # wpctl
           pulseaudio # pactl, for the null-sink mix when both output and input are chosen
+          ffmpeg # concat segments into one file when a recording was paused
         ];
       in
       {

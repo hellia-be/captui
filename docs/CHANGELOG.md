@@ -13,6 +13,11 @@ Hand-written, newest first. Not tied to version numbers.
 
 ## Features
 
+- Pause/resume (`p`) that actually works: recording is split into segments — each
+  pause finalizes the current segment, resume starts a new one, and stop
+  concatenates them with `ffmpeg -c copy` (no re-encode, so no frozen frames or
+  A/V drift). The timer excludes paused time. Works for wf-recorder,
+  wl-screenrec, and audio-only. Adds ffmpeg as a runtime dependency.
 - wl-screenrec backend: set `backend = "wl-screenrec"` in the config to record
   A/V with hardware (VAAPI) encoding instead of wf-recorder's software libx264;
   default stays `wf-recorder`. Audio-only mode is unaffected (always pw-record).

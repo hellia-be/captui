@@ -33,7 +33,10 @@ use captui::audio::{
 use captui::config::{parse_config, Config};
 use captui::format::{format_duration, format_size};
 use captui::meter::{meter_bar, samples_peak};
-use captui::recorder::{extension, timestamped_name, transcribe_argv, Backend, Mode};
+use captui::recorder::{
+    concat_list_line, extension, ffmpeg_concat_argv, segment_path, timestamped_name,
+    transcribe_argv, Backend, Mode,
+};
 use captui::sources::{
     layout_hints, parse_geometry, parse_wlr_randr, region, sort_reading_order, Output, Source,
 };
@@ -343,14 +346,45 @@ struct SourceControl {
     volume: u16,
 }
 
+enum RecSpec {
+    Av {
+        backend: Backend,
+        source: Source,
+        audio: Option<String>,
+        no_hw: bool,
+    },
+    Audio {
+        node: String,
+    },
+}
+
+impl RecSpec {
+    fn spawn(&self, out: &Path) -> Result<Child> {
+        match self {
+            RecSpec::Av {
+                backend,
+                source,
+                audio,
+                no_hw,
+            } => spawn_recorder(*backend, source, audio.as_deref(), out, *no_hw),
+            RecSpec::Audio { node } => spawn_audio_recorder(node, out),
+        }
+    }
+}
+
 struct Rec {
-    child: Child,
+    spec: RecSpec,
     path: PathBuf,
+    segments: Vec<PathBuf>,
+    child: Option<Child>,
+    stderr: Arc<Mutex<String>>,
     stopped: bool,
     saved: bool,
     started: Instant,
     final_elapsed: Option<Duration>,
-    stderr: Arc<Mutex<String>>,
+    paused: bool,
+    pause_started: Option<Instant>,
+    paused_total: Duration,
     sources: Vec<SourceControl>,
     focus: usize,
     mix: Option<AudioMix>,
@@ -358,11 +392,22 @@ struct Rec {
 
 impl Rec {
     fn elapsed(&self) -> Duration {
-        self.final_elapsed.unwrap_or_else(|| self.started.elapsed())
+        if let Some(final_elapsed) = self.final_elapsed {
+            return final_elapsed;
+        }
+        let mut paused = self.paused_total;
+        if let Some(since) = self.pause_started {
+            paused += since.elapsed();
+        }
+        self.started.elapsed().saturating_sub(paused)
     }
 
     fn size_bytes(&self) -> u64 {
-        std::fs::metadata(&self.path).map(|m| m.len()).unwrap_or(0)
+        self.segments
+            .iter()
+            .filter_map(|p| std::fs::metadata(p).ok())
+            .map(|m| m.len())
+            .sum()
     }
 }
 
@@ -581,26 +626,25 @@ impl App {
             }
         };
 
-        let spawned = if self.audio_only {
-            match audio_node.as_deref() {
-                Some(node) => spawn_audio_recorder(node, &path),
+        let spec = if self.audio_only {
+            match audio_node {
+                Some(node) => RecSpec::Audio { node },
                 None => return,
             }
         } else {
-            let backend = Backend::from_config(self.config.backend.as_deref());
-            match self.pending_source.as_ref() {
-                Some(source) => spawn_recorder(
-                    backend,
+            match self.pending_source.clone() {
+                Some(source) => RecSpec::Av {
+                    backend: Backend::from_config(self.config.backend.as_deref()),
                     source,
-                    audio_node.as_deref(),
-                    &path,
-                    self.config.no_hw,
-                ),
+                    audio: audio_node,
+                    no_hw: self.config.no_hw,
+                },
                 None => return,
             }
         };
 
-        match spawned {
+        let seg = segment_path(&path, 0);
+        match spec.spawn(&seg) {
             Ok(mut child) => {
                 let stderr = capture_stderr(&mut child);
                 let mut sources = Vec::new();
@@ -622,13 +666,18 @@ impl App {
                 }
                 self.pending_source = None;
                 self.recording = Some(Rec {
-                    child,
+                    spec,
                     path,
+                    segments: vec![seg],
+                    child: Some(child),
+                    stderr,
                     stopped: false,
                     saved: false,
                     started: Instant::now(),
                     final_elapsed: None,
-                    stderr,
+                    paused: false,
+                    pause_started: None,
+                    paused_total: Duration::ZERO,
                     sources,
                     focus: 0,
                     mix,
@@ -639,6 +688,36 @@ impl App {
             Err(e) => {
                 self.status = Some(format!("{e:#}"));
             }
+        }
+    }
+
+    fn toggle_pause(&mut self) {
+        let Some(rec) = self.recording.as_mut() else {
+            return;
+        };
+        if rec.stopped {
+            return;
+        }
+        if rec.paused {
+            let seg = segment_path(&rec.path, rec.segments.len());
+            match rec.spec.spawn(&seg) {
+                Ok(mut child) => {
+                    rec.stderr = capture_stderr(&mut child);
+                    rec.child = Some(child);
+                    rec.segments.push(seg);
+                    if let Some(since) = rec.pause_started.take() {
+                        rec.paused_total += since.elapsed();
+                    }
+                    rec.paused = false;
+                }
+                Err(e) => self.status = Some(format!("resume failed: {e:#}")),
+            }
+        } else {
+            if let Some(mut child) = rec.child.take() {
+                let _ = stop_recorder(&mut child);
+            }
+            rec.paused = true;
+            rec.pause_started = Some(Instant::now());
         }
     }
 
@@ -669,40 +748,83 @@ impl App {
         if rec.stopped {
             return;
         }
-        rec.final_elapsed = Some(rec.started.elapsed());
-        rec.sources.clear();
-        let _ = stop_recorder(&mut rec.child);
-        rec.stopped = true;
-        rec.mix = None;
-        rec.saved = std::fs::metadata(&rec.path)
-            .map(|m| m.len() > 0)
-            .unwrap_or(false);
-        self.status = if rec.saved {
-            None
-        } else {
-            Some(format!("recording failed: {}", stderr_tail(&rec.stderr)))
-        };
+        if rec.paused {
+            if let Some(since) = rec.pause_started.take() {
+                rec.paused_total += since.elapsed();
+            }
+            rec.paused = false;
+        }
+        self.finalize();
     }
 
     fn poll_recorder(&mut self) {
         let Some(rec) = self.recording.as_mut() else {
             return;
         };
-        if rec.stopped {
+        if rec.stopped || rec.paused {
             return;
         }
         // The recorder exiting on its own means it crashed or refused to start.
-        if matches!(rec.child.try_wait(), Ok(Some(_))) {
-            rec.final_elapsed = Some(rec.elapsed());
-            rec.sources.clear();
-            rec.stopped = true;
-            rec.mix = None;
-            rec.saved = std::fs::metadata(&rec.path)
-                .map(|m| m.len() > 0)
-                .unwrap_or(false);
-            if !rec.saved {
-                self.status = Some(format!("recording failed: {}", stderr_tail(&rec.stderr)));
+        let died = matches!(rec.child.as_mut().map(Child::try_wait), Some(Ok(Some(_))));
+        if died {
+            rec.child = None;
+            self.finalize();
+        }
+    }
+
+    fn finalize(&mut self) {
+        let Some(rec) = self.recording.as_mut() else {
+            return;
+        };
+        rec.final_elapsed = Some(rec.elapsed());
+        rec.sources.clear();
+        if let Some(mut child) = rec.child.take() {
+            let _ = stop_recorder(&mut child);
+        }
+        rec.mix = None;
+        rec.saved = concat_segments(&rec.segments, &rec.path);
+        rec.stopped = true;
+        self.status = if rec.saved {
+            None
+        } else {
+            Some(format!("recording failed: {}", stderr_tail(&rec.stderr)))
+        };
+    }
+}
+
+fn concat_segments(segments: &[PathBuf], out: &Path) -> bool {
+    let present: Vec<&PathBuf> = segments
+        .iter()
+        .filter(|p| std::fs::metadata(p).map(|m| m.len() > 0).unwrap_or(false))
+        .collect();
+    match present.as_slice() {
+        [] => false,
+        [only] => std::fs::rename(only, out).is_ok(),
+        many => {
+            let list = out.with_extension("captui-concat.txt");
+            let body: String = many
+                .iter()
+                .map(|p| concat_list_line(&p.to_string_lossy()))
+                .collect();
+            if std::fs::write(&list, body).is_err() {
+                return false;
             }
+            let argv = ffmpeg_concat_argv(&list.to_string_lossy(), &out.to_string_lossy());
+            let ok = Command::new(&argv[0])
+                .args(&argv[1..])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+            let _ = std::fs::remove_file(&list);
+            if ok {
+                for seg in many {
+                    let _ = std::fs::remove_file(seg);
+                }
+            }
+            ok && std::fs::metadata(out).map(|m| m.len() > 0).unwrap_or(false)
         }
     }
 }
@@ -806,6 +928,7 @@ fn run(
             },
             Screen::Recording => match k.code {
                 KeyCode::Char('s') => app.stop(),
+                KeyCode::Char('p') => app.toggle_pause(),
                 KeyCode::Up | KeyCode::Char('k') => app.focus_source(-1),
                 KeyCode::Down | KeyCode::Char('j') => app.focus_source(1),
                 KeyCode::Left | KeyCode::Char('h') => app.adjust_volume(-5),
@@ -970,6 +1093,11 @@ fn draw_recording(f: &mut Frame, app: &App, area: Rect) {
                 Line::from("✗ recording failed".red().bold())
             } else if rec.stopped {
                 Line::from(vec![format!("■ stopped{tag}  ").green(), timer.into()])
+            } else if rec.paused {
+                Line::from(vec![
+                    format!("❚❚ PAUSED{tag}  ").yellow().bold(),
+                    timer.into(),
+                ])
             } else {
                 Line::from(vec![format!("● REC{tag}  ").red().bold(), timer.into()])
             };
@@ -1005,7 +1133,8 @@ fn draw_recording(f: &mut Frame, app: &App, area: Rect) {
 
 fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
     let stopped = matches!(&app.recording, Some(r) if r.stopped);
-    let adjustable = matches!(&app.recording, Some(r) if !r.stopped && r.sources.iter().any(|s| s.sink_input.is_some()));
+    let paused = matches!(&app.recording, Some(r) if r.paused);
+    let adjustable = matches!(&app.recording, Some(r) if !r.stopped && !r.paused && r.sources.iter().any(|s| s.sink_input.is_some()));
     let hint = match app.screen {
         Screen::Source => {
             " up/down move  i identify  enter display  r region  a audio-only  q quit "
@@ -1020,10 +1149,11 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
                 " n new recording  q quit "
             }
         }
+        Screen::Recording if paused => " p resume  s stop  q stop and quit ",
         Screen::Recording if adjustable => {
-            " s stop  up/down focus  left/right volume  q stop and quit "
+            " s stop  p pause  up/down focus  left/right volume  q stop and quit "
         }
-        Screen::Recording => " s stop  q stop and quit ",
+        Screen::Recording => " s stop  p pause  q stop and quit ",
     };
     let footer = match &app.status {
         Some(s) => Paragraph::new(format!(" {s} ")).style(Style::new().yellow()),

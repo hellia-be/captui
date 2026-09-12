@@ -1,5 +1,7 @@
 //! wf-recorder argv and output naming. See docs/DESIGN-NOTES.md.
 
+use std::path::{Path, PathBuf};
+
 use crate::sources::Source;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -77,6 +79,38 @@ impl Backend {
             Backend::WlScreenrec => wl_screenrec_argv(source, audio, out, no_hw),
         }
     }
+}
+
+pub fn segment_path(final_path: &Path, n: usize) -> PathBuf {
+    let stem = final_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("captui");
+    let name = match final_path.extension().and_then(|e| e.to_str()) {
+        Some(ext) => format!("{stem}.part{n}.{ext}"),
+        None => format!("{stem}.part{n}"),
+    };
+    final_path.with_file_name(name)
+}
+
+pub fn concat_list_line(path: &str) -> String {
+    format!("file '{}'\n", path.replace('\'', "'\\''"))
+}
+
+pub fn ffmpeg_concat_argv(list_file: &str, out: &str) -> Vec<String> {
+    vec![
+        "ffmpeg".into(),
+        "-y".into(),
+        "-f".into(),
+        "concat".into(),
+        "-safe".into(),
+        "0".into(),
+        "-i".into(),
+        list_file.into(),
+        "-c".into(),
+        "copy".into(),
+        out.into(),
+    ]
 }
 
 pub fn transcribe_argv(template: &str, file: &str) -> Option<Vec<String>> {
@@ -225,6 +259,44 @@ mod tests {
         assert_eq!(
             Backend::WfRecorder.argv(&s, None, "/o.mkv", false)[0],
             "wf-recorder"
+        );
+    }
+
+    #[test]
+    fn segment_paths_insert_part_index() {
+        assert_eq!(
+            segment_path(Path::new("/rec/cap.mkv"), 0),
+            PathBuf::from("/rec/cap.part0.mkv")
+        );
+        assert_eq!(
+            segment_path(Path::new("/rec/cap.flac"), 3),
+            PathBuf::from("/rec/cap.part3.flac")
+        );
+    }
+
+    #[test]
+    fn concat_list_line_escapes_quotes() {
+        assert_eq!(concat_list_line("/a/b.mkv"), "file '/a/b.mkv'\n");
+        assert_eq!(concat_list_line("/a/it's.mkv"), "file '/a/it'\\''s.mkv'\n");
+    }
+
+    #[test]
+    fn ffmpeg_concat_argv_stream_copies() {
+        assert_eq!(
+            ffmpeg_concat_argv("/tmp/l.txt", "/rec/cap.mkv"),
+            vec![
+                "ffmpeg",
+                "-y",
+                "-f",
+                "concat",
+                "-safe",
+                "0",
+                "-i",
+                "/tmp/l.txt",
+                "-c",
+                "copy",
+                "/rec/cap.mkv"
+            ]
         );
     }
 
