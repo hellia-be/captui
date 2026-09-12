@@ -42,6 +42,11 @@ Hand-written, newest first. Not tied to version numbers.
 
 ## Fixes
 
+- Output and input meters showed the same level: the meter used
+  `pw-record --target`, which wants a PipeWire node and cannot resolve a pulse
+  `<sink>.monitor`, so it fell back to the default source (the mic) and both bars
+  tracked the mic. Meter with `parec --device` (same pulse names as the recorder)
+  instead, so each bar tracks its own source.
 - Better video quality: encode with libx264 at `crf=18`, `preset=fast` instead
   of wf-recorder's soft defaults, so screen text and detail are sharp. (Hardware
   VAAPI encoding remains the separate wl-screenrec backend on the roadmap.)

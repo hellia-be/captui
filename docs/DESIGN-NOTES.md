@@ -147,11 +147,17 @@ The "is sound coming in" confirmation is a live level bar per chosen source on
 the recording screen: an "output" bar and/or an "input" bar. Each meters the raw
 chosen node (the sink monitor and/or the mic) directly, not the mixed
 `captui_mix.monitor`, so the two levels stay separate even when both are being
-mixed into the recording. Each bar is a `pw-record --raw --format=f32
---channels=1 --target=<node> -` streaming headerless mono float samples to
-stdout; a background thread computes a decaying peak from each chunk and
-publishes it in an atomic. The draw loop reads those atomics and renders the
-bars. `--raw` matters: without it pw-cat wraps stdout in an `.au`
+mixed into the recording. Each bar is a `parec --device=<node> --format=float32le
+--rate=48000 --channels=1` streaming headerless mono float samples to stdout; a
+background thread computes a decaying peak from each chunk and publishes it in an
+atomic. The draw loop reads those atomics and renders the bars.
+
+parec (PulseAudio), not pw-record, because the meter must accept the same source
+names the recorder uses, including a sink monitor `<sink>.monitor`. pw-record's
+`--target` wants a PipeWire node and does not resolve the pulse `.monitor` name,
+so it silently falls back to the default source, making the output meter read the
+mic (both bars then show the same level). parec `--device` takes the pulse name,
+matching wf-recorder. `--raw` matters: without it pw-cat wraps stdout in an `.au`
 container (big-endian), which would garble the little-endian float parse. The
 sample-to-peak and level-to-bar helpers are pure and unit-tested; the process and
 reader thread are IO in src/main.rs, torn down (child killed, thread joined) when

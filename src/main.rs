@@ -234,14 +234,13 @@ impl Drop for Meter {
 }
 
 fn spawn_meter(node: &str) -> Option<Meter> {
-    let mut child = Command::new("pw-record")
+    let mut child = Command::new("parec")
         .args([
-            "--raw",
-            "--format=f32",
+            "--device",
+            node,
+            "--format=float32le",
             "--rate=48000",
             "--channels=1",
-            &format!("--target={node}"),
-            "-",
         ])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
