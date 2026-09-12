@@ -55,6 +55,11 @@ Hand-written, newest first. Not tied to version numbers.
 
 ## Fixes
 
+- Recorder failures are no longer silent: captui captured and nulled the
+  recorder's stderr, so a recorder that crashed or produced no file left a fake
+  running timer and no saved capture. Now the recorder's stderr is captured, an
+  early exit is detected, and a missing/empty output on stop is reported as
+  "recording failed: <error>" rather than "saved".
 - The "n new recording" hint was hidden after stopping: a "saved" status
   occupied the footer. Drop that status on a successful stop (the body already
   shows the saved path), so the `n new recording / q quit` hint shows.

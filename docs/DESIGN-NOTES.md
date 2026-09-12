@@ -147,10 +147,17 @@ days-from-civil algorithm, so no date crate is pulled in.
 The process spawn and stop live in the IO app layer (src/main.rs). After the
 audio pick, captui resolves the output directory (the XDG videos dir via the
 directories crate, else `$HOME/Videos`, then a `captures` subdir), spawns
-wf-recorder as a child with its stdio nulled so it does not corrupt the TUI, and
-tracks the child. Stopping sends SIGINT via the nix crate (never a hard kill, so
-wf-recorder finalizes the container) and waits for the child; quitting while
-recording stops first, so a capture is never left unfinalized.
+wf-recorder as a child (stdout nulled). Stopping sends SIGINT via the nix crate
+(never a hard kill, so wf-recorder finalizes the container) and waits for the
+child; quitting while recording stops first, so a capture is never left
+unfinalized.
+
+The recorder's stderr is captured (a drain thread into a shared string), not
+nulled, so failures are not silent. If the recorder exits on its own (polled with
+`try_wait` each tick) or the output file is missing/empty on stop, captui marks
+the recording failed and shows the last stderr line, rather than counting a fake
+timer over a dead recorder. Only a recording that produced a non-empty file is
+reported as saved (and eligible for the transcribe handoff).
 
 ## Audio metering (src/meter.rs)
 
