@@ -13,6 +13,9 @@ Hand-written, newest first. Not tied to version numbers.
 
 ## Features
 
+- Per-source mix volume: when mixing output + input, the recording screen lets
+  you focus a source (up/down) and adjust its level (left/right) with a live
+  percentage, applied to that loopback's stream only, never system volume.
 - Separate output and input level meters: the recording screen shows one bar per
   chosen source (metering the raw sink monitor and mic directly), so you can see
   system audio and your mic independently even when they are mixed.

@@ -86,6 +86,15 @@ recorder is finalized first, then the mix is torn down. This is why pactl
 (pulseaudio) is a runtime dependency. A short loopback latency (20ms) keeps the
 mixed audio close to video.
 
+In the mix case each loopback's sink-input on `captui_mix` is resolved from
+`pactl list sink-inputs` (matching its owner module id, via the pure
+`parse_sink_input_index`), so the recording screen can adjust that source's level
+with `pactl set-sink-input-volume` (left/right on the focused source) without
+touching system volume. Resolution is best-effort: if an index cannot be found,
+that source simply has no volume control and metering/recording still work.
+Volume control exists only for the mix; a single directly-recorded source has
+none (adjusting it would change the device's global volume).
+
 The value carried forward is the node name passed to wf-recorder. It must be
 given as `--audio=<node>` (the attached form): wf-recorder's `-a`/`--audio` takes
 an optional argument, so getopt only binds a value when attached. A space-

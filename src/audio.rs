@@ -90,6 +90,21 @@ pub fn parse_pw_dump(json: &str) -> Vec<AudioSource> {
     sources
 }
 
+pub fn parse_sink_input_index(text: &str, module_id: &str) -> Option<u32> {
+    let mut current = None;
+    for line in text.lines() {
+        let t = line.trim();
+        if let Some(rest) = t.strip_prefix("Sink Input #") {
+            current = rest.trim().parse().ok();
+        } else if let Some(rest) = t.strip_prefix("Owner Module:") {
+            if rest.trim() == module_id {
+                return current;
+            }
+        }
+    }
+    None
+}
+
 fn default_meta(objects: &[serde_json::Value], key: &str) -> Option<String> {
     for obj in objects {
         let Some(entries) = obj["metadata"].as_array() else {
@@ -194,6 +209,21 @@ mod tests {
     fn bad_json_is_empty() {
         assert!(parse_pw_dump("not json").is_empty());
         assert!(parse_pw_dump("{}").is_empty());
+    }
+
+    #[test]
+    fn finds_sink_input_by_owner_module() {
+        let text = "\
+Sink Input #10
+\tDriver: PipeWire
+\tOwner Module: 40
+Sink Input #11
+\tDriver: PipeWire
+\tOwner Module: 41
+";
+        assert_eq!(parse_sink_input_index(text, "41"), Some(11));
+        assert_eq!(parse_sink_input_index(text, "40"), Some(10));
+        assert_eq!(parse_sink_input_index(text, "99"), None);
     }
 
     #[test]
