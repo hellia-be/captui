@@ -10,7 +10,7 @@ All P1 items are done. See docs/CHANGELOG.md.
 ## P2
 
 1. Window source (compositor IPC geometry captured as a region).
-2. Audio-only mode (flac) for lean transcripts.
-3. Whisper handoff (configured transcription command after stop).
-4. wl-screenrec backend option (hardware encode).
-5. Config file (default output dir, container, default audio source).
+2. Whisper handoff (configured transcription command after stop).
+3. wl-screenrec backend option (hardware encode).
+4. Config file (default output dir, container, default audio source).
+5. Separate input/output level meters, with per-source volume control.

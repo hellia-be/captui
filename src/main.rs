@@ -67,7 +67,7 @@ fn enumerate_audio() -> Result<Vec<AudioSource>> {
     Ok(parse_pw_dump(&String::from_utf8_lossy(&out.stdout)))
 }
 
-fn output_path() -> Result<PathBuf> {
+fn output_path(mode: Mode) -> Result<PathBuf> {
     let base = UserDirs::new()
         .and_then(|u| u.video_dir().map(Path::to_path_buf))
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Videos")))
@@ -78,7 +78,18 @@ fn output_path() -> Result<PathBuf> {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or_default();
-    Ok(dir.join(timestamped_name(secs, extension(Mode::AudioVideo))))
+    Ok(dir.join(timestamped_name(secs, extension(mode))))
+}
+
+fn spawn_audio_recorder(node: &str, out: &Path) -> Result<Child> {
+    Command::new("pw-record")
+        .arg(format!("--target={node}"))
+        .arg(out)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .context("could not spawn pw-record")
 }
 
 fn spawn_recorder(source: &Source, audio: Option<&str>, out: &Path) -> Result<Child> {
@@ -251,6 +262,7 @@ struct App {
     input_options: Vec<Option<AudioSource>>,
     input_list: ListState,
     chosen_output: Option<String>,
+    audio_only: bool,
     screen: Screen,
     recording: Option<Rec>,
     status: Option<String>,
@@ -271,6 +283,7 @@ impl App {
             input_options: Vec::new(),
             input_list: ListState::default(),
             chosen_output: None,
+            audio_only: false,
             screen: Screen::Source,
             recording: None,
             status: None,
@@ -304,13 +317,21 @@ impl App {
             .selected()
             .and_then(|i| self.displays.get(i))
         {
+            self.audio_only = false;
             self.pending_source = Some(Source::Display(o.name.clone()));
             self.enter_output();
         }
     }
 
     fn choose_region(&mut self, src: Source) {
+        self.audio_only = false;
         self.pending_source = Some(src);
+        self.enter_output();
+    }
+
+    fn choose_audio_only(&mut self) {
+        self.audio_only = true;
+        self.pending_source = None;
         self.enter_output();
     }
 
@@ -373,34 +394,54 @@ impl App {
             .and_then(|i| self.input_options.get(i))
             .and_then(|c| c.as_ref().map(|a| a.node_name.clone()));
         let output = self.chosen_output.clone();
-        let Some(source) = self.pending_source.take() else {
-            return;
-        };
+        let target = audio_target(output.as_deref(), input.as_deref());
 
-        let (audio_node, mix) = match audio_target(output.as_deref(), input.as_deref()) {
+        if self.audio_only && target == AudioTarget::Silent {
+            self.status = Some("audio-only needs an output or an input".into());
+            return;
+        }
+
+        let (audio_node, mix) = match target {
             AudioTarget::Silent => (None, None),
             AudioTarget::Single(node) => (Some(node), None),
             AudioTarget::Mix { output, input } => match setup_mix(&output, &input) {
                 Ok((monitor, mix)) => (Some(monitor), Some(mix)),
                 Err(e) => {
-                    self.pending_source = Some(source);
                     self.status = Some(format!("{e:#}"));
                     return;
                 }
             },
         };
 
-        let path = match output_path() {
+        let mode = if self.audio_only {
+            Mode::AudioOnly
+        } else {
+            Mode::AudioVideo
+        };
+        let path = match output_path(mode) {
             Ok(p) => p,
             Err(e) => {
-                self.pending_source = Some(source);
                 self.status = Some(format!("{e:#}"));
                 return;
             }
         };
-        match spawn_recorder(&source, audio_node.as_deref(), &path) {
+
+        let spawned = if self.audio_only {
+            match audio_node.as_deref() {
+                Some(node) => spawn_audio_recorder(node, &path),
+                None => return,
+            }
+        } else {
+            match self.pending_source.as_ref() {
+                Some(source) => spawn_recorder(source, audio_node.as_deref(), &path),
+                None => return,
+            }
+        };
+
+        match spawned {
             Ok(child) => {
                 let meter = audio_node.as_deref().and_then(spawn_meter);
+                self.pending_source = None;
                 self.recording = Some(Rec {
                     child,
                     path,
@@ -414,7 +455,6 @@ impl App {
                 self.screen = Screen::Recording;
             }
             Err(e) => {
-                self.pending_source = Some(source);
                 self.status = Some(format!("{e:#}"));
             }
         }
@@ -492,6 +532,7 @@ fn run(
                     Ok(src) => app.choose_region(src),
                     Err(e) => app.status = Some(format!("{e:#}")),
                 },
+                KeyCode::Char('a') => app.choose_audio_only(),
                 KeyCode::Enter => app.choose_display(),
                 _ => {}
             },
@@ -658,10 +699,11 @@ fn draw_recording(f: &mut Frame, app: &App, area: Rect) {
         Some(rec) => {
             let timer = format_duration(rec.elapsed().as_secs());
             let size = format_size(rec.size_bytes());
+            let tag = if app.audio_only { " (audio)" } else { "" };
             let head = if rec.stopped {
-                Line::from(vec!["■ stopped  ".green(), timer.into()])
+                Line::from(vec![format!("■ stopped{tag}  ").green(), timer.into()])
             } else {
-                Line::from(vec!["● REC  ".red().bold(), timer.into()])
+                Line::from(vec![format!("● REC{tag}  ").red().bold(), timer.into()])
             };
             let mut lines = vec![head, Line::from(format!("size: {size}"))];
             if let Some(meter) = &rec.meter {
@@ -681,7 +723,9 @@ fn draw_recording(f: &mut Frame, app: &App, area: Rect) {
 fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
     let stopped = matches!(&app.recording, Some(r) if r.stopped);
     let hint = match app.screen {
-        Screen::Source => " up/down move  i identify  enter display  r region  q quit ",
+        Screen::Source => {
+            " up/down move  i identify  enter display  r region  a audio-only  q quit "
+        }
         Screen::AudioOutput => " up/down move  enter next (input)  esc back  q quit ",
         Screen::AudioInput => " up/down move  enter record  esc back  q quit ",
         Screen::Recording if stopped => " q quit ",
