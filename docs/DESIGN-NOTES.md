@@ -130,7 +130,10 @@ better quality-per-bitrate and lower CPU where the GPU supports it). `Backend`
 (pure) dispatches to the matching argv builder. Both take the same `-o`/`-g`
 source and `-f` output; they differ on audio — wf-recorder wants the attached
 `--audio=<node>`, wl-screenrec wants `--audio --audio-device <node>`. Audio-only
-mode always uses pw-record regardless of backend. Neither recorder supports
+mode always uses pw-record regardless of backend. wl-screenrec's hardware VAAPI
+path fails to negotiate a capture format on NVIDIA (block-linear dmabuf
+modifiers), so `no_hw = true` in the config adds `--no-hw` (software encode) and
+NVIDIA users are better off on the default wf-recorder. Neither recorder supports
 pausing (SIGSTOP desyncs audio because the audio server buffers through the
 freeze; wl-screenrec has no pause either), so captui does not offer pause; a
 clean pause would require recording in segments and concatenating.

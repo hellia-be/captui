@@ -36,9 +36,17 @@ pub fn wf_recorder_argv(source: &Source, audio: Option<&str>, out: &str) -> Vec<
     argv
 }
 
-pub fn wl_screenrec_argv(source: &Source, audio: Option<&str>, out: &str) -> Vec<String> {
+pub fn wl_screenrec_argv(
+    source: &Source,
+    audio: Option<&str>,
+    out: &str,
+    no_hw: bool,
+) -> Vec<String> {
     let mut argv = vec!["wl-screenrec".to_string()];
     argv.extend(source.wf_args());
+    if no_hw {
+        argv.push("--no-hw".into());
+    }
     if let Some(a) = audio {
         argv.push("--audio".into());
         argv.push("--audio-device".into());
@@ -63,10 +71,10 @@ impl Backend {
         }
     }
 
-    pub fn argv(self, source: &Source, audio: Option<&str>, out: &str) -> Vec<String> {
+    pub fn argv(self, source: &Source, audio: Option<&str>, out: &str, no_hw: bool) -> Vec<String> {
         match self {
             Backend::WfRecorder => wf_recorder_argv(source, audio, out),
-            Backend::WlScreenrec => wl_screenrec_argv(source, audio, out),
+            Backend::WlScreenrec => wl_screenrec_argv(source, audio, out, no_hw),
         }
     }
 }
@@ -169,10 +177,10 @@ mod tests {
     }
 
     #[test]
-    fn wl_screenrec_argv_uses_audio_device() {
+    fn wl_screenrec_argv_uses_audio_device_and_no_hw() {
         let s = Source::Display("DP-1".into());
         assert_eq!(
-            wl_screenrec_argv(&s, Some("mon"), "/tmp/c.mkv"),
+            wl_screenrec_argv(&s, Some("mon"), "/tmp/c.mkv", false),
             vec![
                 "wl-screenrec",
                 "-o",
@@ -185,8 +193,15 @@ mod tests {
             ]
         );
         assert_eq!(
-            wl_screenrec_argv(&Source::Region("0,0 8x8".into()), None, "/tmp/c.mkv"),
-            vec!["wl-screenrec", "-g", "0,0 8x8", "-f", "/tmp/c.mkv"]
+            wl_screenrec_argv(&Source::Region("0,0 8x8".into()), None, "/tmp/c.mkv", true),
+            vec![
+                "wl-screenrec",
+                "-g",
+                "0,0 8x8",
+                "--no-hw",
+                "-f",
+                "/tmp/c.mkv"
+            ]
         );
     }
 
@@ -204,11 +219,11 @@ mod tests {
         assert_eq!(Backend::from_config(Some("nonsense")), Backend::WfRecorder);
         let s = Source::Display("DP-1".into());
         assert_eq!(
-            Backend::WlScreenrec.argv(&s, None, "/o.mkv")[0],
+            Backend::WlScreenrec.argv(&s, None, "/o.mkv", false)[0],
             "wl-screenrec"
         );
         assert_eq!(
-            Backend::WfRecorder.argv(&s, None, "/o.mkv")[0],
+            Backend::WfRecorder.argv(&s, None, "/o.mkv", false)[0],
             "wf-recorder"
         );
     }

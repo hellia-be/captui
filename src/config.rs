@@ -11,6 +11,7 @@ pub struct Config {
     pub audio_input: Option<String>,
     pub transcribe_command: Option<String>,
     pub backend: Option<String>,
+    pub no_hw: bool,
 }
 
 pub fn parse_config(text: &str) -> Config {
@@ -31,6 +32,7 @@ mod tests {
             audio_input = "alsa_input.mic"
             transcribe_command = "transcribe-remote {}"
             backend = "wl-screenrec"
+            no_hw = true
         "#,
         );
         assert_eq!(cfg.output_dir.as_deref(), Some("~/rec"));
@@ -45,6 +47,7 @@ mod tests {
             Some("transcribe-remote {}")
         );
         assert_eq!(cfg.backend.as_deref(), Some("wl-screenrec"));
+        assert!(cfg.no_hw);
     }
 
     #[test]
