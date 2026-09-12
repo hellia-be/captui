@@ -52,6 +52,9 @@ Hand-written, newest first. Not tied to version numbers.
 
 ## Fixes
 
+- The "n new recording" hint was hidden after stopping: a "saved" status
+  occupied the footer. Drop that status on a successful stop (the body already
+  shows the saved path), so the `n new recording / q quit` hint shows.
 - Output and input meters showed the same level: the meter used
   `pw-record --target`, which wants a PipeWire node and cannot resolve a pulse
   `<sink>.monitor`, so it fell back to the default source (the mic) and both bars
