@@ -412,22 +412,32 @@ impl Rec {
 }
 
 enum Screen {
-    Source,
-    AudioOutput,
-    AudioInput,
+    Select,
     Recording,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Section {
+    Display,
+    Audio,
+    Mic,
+}
+
+enum DisplayOption {
+    Display(usize),
+    Region,
+    AudioOnly,
 }
 
 struct App {
     displays: Vec<Output>,
-    source_list: ListState,
-    pending_source: Option<Source>,
-    output_options: Vec<Option<AudioSource>>,
-    output_list: ListState,
-    input_options: Vec<Option<AudioSource>>,
-    input_list: ListState,
-    chosen_output: Option<String>,
-    audio_only: bool,
+    display_options: Vec<DisplayOption>,
+    display_list: ListState,
+    audio_options: Vec<Option<AudioSource>>,
+    audio_list: ListState,
+    mic_options: Vec<Option<AudioSource>>,
+    mic_list: ListState,
+    section: Section,
     screen: Screen,
     recording: Option<Rec>,
     status: Option<String>,
@@ -435,23 +445,57 @@ struct App {
     transcribe: bool,
 }
 
+fn select_node(options: &[Option<AudioSource>], want: Option<&str>) -> Option<usize> {
+    want.and_then(|w| {
+        options
+            .iter()
+            .position(|o| o.as_ref().is_some_and(|a| a.node_name == w))
+    })
+}
+
 impl App {
     fn new(displays: Vec<Output>, config: Config) -> Self {
-        let mut source_list = ListState::default();
-        if !displays.is_empty() {
-            source_list.select(Some(0));
-        }
+        let audio = enumerate_audio().unwrap_or_default();
+        let (monitors, mics): (Vec<_>, Vec<_>) = audio.into_iter().partition(|a| a.is_monitor);
+        let mut audio_options: Vec<Option<AudioSource>> = monitors.into_iter().map(Some).collect();
+        audio_options.push(None);
+        let mut mic_options: Vec<Option<AudioSource>> = mics.into_iter().map(Some).collect();
+        mic_options.push(None);
+
+        let mut display_options: Vec<DisplayOption> =
+            (0..displays.len()).map(DisplayOption::Display).collect();
+        display_options.push(DisplayOption::Region);
+        display_options.push(DisplayOption::AudioOnly);
+
+        let mut display_list = ListState::default();
+        display_list.select(Some(0));
+
+        let mut audio_list = ListState::default();
+        audio_list.select(Some(
+            select_node(&audio_options, config.audio_output.as_deref()).unwrap_or(0),
+        ));
+
+        let mic_sel = select_node(&mic_options, config.audio_input.as_deref())
+            .or_else(|| {
+                mic_options.iter().position(|o| {
+                    o.as_ref()
+                        .is_some_and(|a| a.description.ends_with("(default)"))
+                })
+            })
+            .unwrap_or(mic_options.len().saturating_sub(1));
+        let mut mic_list = ListState::default();
+        mic_list.select(Some(mic_sel));
+
         Self {
             displays,
-            source_list,
-            pending_source: None,
-            output_options: Vec::new(),
-            output_list: ListState::default(),
-            input_options: Vec::new(),
-            input_list: ListState::default(),
-            chosen_output: None,
-            audio_only: false,
-            screen: Screen::Source,
+            display_options,
+            display_list,
+            audio_options,
+            audio_list,
+            mic_options,
+            mic_list,
+            section: Section::Display,
+            screen: Screen::Select,
             recording: None,
             status: None,
             config,
@@ -468,11 +512,19 @@ impl App {
         ready
     }
 
+    fn cycle_section(&mut self, forward: bool) {
+        self.section = match (self.section, forward) {
+            (Section::Display, true) | (Section::Mic, false) => Section::Audio,
+            (Section::Audio, true) | (Section::Display, false) => Section::Mic,
+            (Section::Mic, true) | (Section::Audio, false) => Section::Display,
+        };
+    }
+
     fn active_list(&mut self) -> (&mut ListState, usize) {
-        match self.screen {
-            Screen::AudioOutput => (&mut self.output_list, self.output_options.len()),
-            Screen::AudioInput => (&mut self.input_list, self.input_options.len()),
-            _ => (&mut self.source_list, self.displays.len()),
+        match self.section {
+            Section::Display => (&mut self.display_list, self.display_options.len()),
+            Section::Audio => (&mut self.audio_list, self.audio_options.len()),
+            Section::Mic => (&mut self.mic_list, self.mic_options.len()),
         }
     }
 
@@ -489,110 +541,56 @@ impl App {
         self.status = Some(run_identify(&self.displays));
     }
 
-    fn choose_display(&mut self) {
-        if let Some(o) = self
-            .source_list
-            .selected()
-            .and_then(|i| self.displays.get(i))
-        {
-            self.audio_only = false;
-            self.pending_source = Some(Source::Display(o.name.clone()));
-            self.enter_output();
-        }
-    }
-
-    fn choose_region(&mut self, src: Source) {
-        self.audio_only = false;
-        self.pending_source = Some(src);
-        self.enter_output();
-    }
-
-    fn choose_audio_only(&mut self) {
-        self.audio_only = true;
-        self.pending_source = None;
-        self.enter_output();
-    }
-
     fn restart(&mut self) {
         self.recording = None;
-        self.pending_source = None;
-        self.chosen_output = None;
-        self.audio_only = false;
         self.status = None;
-        self.screen = Screen::Source;
+        self.section = Section::Display;
+        self.screen = Screen::Select;
     }
 
-    fn enter_output(&mut self) {
-        self.status = None;
-        let sources = match enumerate_audio() {
-            Ok(s) => s,
-            Err(e) => {
-                self.status = Some(format!("{e:#}"));
-                Vec::new()
-            }
-        };
-        let (monitors, mics): (Vec<_>, Vec<_>) = sources.into_iter().partition(|a| a.is_monitor);
-        self.output_options = monitors
-            .into_iter()
-            .map(Some)
-            .chain(std::iter::once(None))
-            .collect();
-        self.input_options = mics
-            .into_iter()
-            .map(Some)
-            .chain(std::iter::once(None))
-            .collect();
-        // Preselect the configured sources; else system audio, and the default mic.
-        let match_node = |opts: &[Option<AudioSource>], want: Option<&str>| {
-            want.and_then(|w| {
-                opts.iter()
-                    .position(|o| o.as_ref().is_some_and(|a| a.node_name == w))
-            })
-        };
-        let out_sel = match_node(&self.output_options, self.config.audio_output.as_deref());
-        self.output_list.select(Some(out_sel.unwrap_or(0)));
-        let default_mic = self.input_options.iter().position(|o| {
-            o.as_ref()
-                .is_some_and(|a| a.description.ends_with("(default)"))
-        });
-        let in_sel = match_node(&self.input_options, self.config.audio_input.as_deref())
-            .or(default_mic)
-            .unwrap_or(self.input_options.len().saturating_sub(1));
-        self.input_list.select(Some(in_sel));
-        self.screen = Screen::AudioOutput;
-    }
-
-    fn confirm_output(&mut self) {
-        self.chosen_output = self
-            .output_list
+    fn record(&mut self) {
+        let (source, audio_only) = match self
+            .display_list
             .selected()
-            .and_then(|i| self.output_options.get(i))
+            .and_then(|i| self.display_options.get(i))
+        {
+            Some(DisplayOption::Display(i)) => match self.displays.get(*i) {
+                Some(o) => (Some(Source::Display(o.name.clone())), false),
+                None => return,
+            },
+            Some(DisplayOption::Region) => match run_slurp() {
+                Ok(src) => (Some(src), false),
+                Err(e) => {
+                    self.status = Some(format!("{e:#}"));
+                    return;
+                }
+            },
+            Some(DisplayOption::AudioOnly) => (None, true),
+            None => return,
+        };
+        let output = self
+            .audio_list
+            .selected()
+            .and_then(|i| self.audio_options.get(i))
             .and_then(|c| c.as_ref().map(|a| a.node_name.clone()));
-        self.screen = Screen::AudioInput;
-    }
-
-    fn back_to_source(&mut self) {
-        self.pending_source = None;
-        self.status = None;
-        self.screen = Screen::Source;
-    }
-
-    fn back_to_output(&mut self) {
-        self.status = None;
-        self.screen = Screen::AudioOutput;
-    }
-
-    fn start_recording(&mut self) {
         let input = self
-            .input_list
+            .mic_list
             .selected()
-            .and_then(|i| self.input_options.get(i))
+            .and_then(|i| self.mic_options.get(i))
             .and_then(|c| c.as_ref().map(|a| a.node_name.clone()));
-        let output = self.chosen_output.clone();
-        let target = audio_target(output.as_deref(), input.as_deref());
+        self.start_recording(source, audio_only, output, input);
+    }
 
-        if self.audio_only && target == AudioTarget::Silent {
-            self.status = Some("audio-only needs an output or an input".into());
+    fn start_recording(
+        &mut self,
+        source: Option<Source>,
+        audio_only: bool,
+        output: Option<String>,
+        input: Option<String>,
+    ) {
+        let target = audio_target(output.as_deref(), input.as_deref());
+        if audio_only && target == AudioTarget::Silent {
+            self.status = Some("audio-only needs system audio or a mic".into());
             return;
         }
 
@@ -613,7 +611,7 @@ impl App {
             },
         };
 
-        let mode = if self.audio_only {
+        let mode = if audio_only {
             Mode::AudioOnly
         } else {
             Mode::AudioVideo
@@ -626,16 +624,16 @@ impl App {
             }
         };
 
-        let spec = if self.audio_only {
+        let spec = if audio_only {
             match audio_node {
                 Some(node) => RecSpec::Audio { node },
                 None => return,
             }
         } else {
-            match self.pending_source.clone() {
-                Some(source) => RecSpec::Av {
+            match source {
+                Some(src) => RecSpec::Av {
                     backend: Backend::from_config(self.config.backend.as_deref()),
-                    source,
+                    source: src,
                     audio: audio_node,
                     no_hw: self.config.no_hw,
                 },
@@ -664,7 +662,6 @@ impl App {
                         volume: 100,
                     });
                 }
-                self.pending_source = None;
                 self.recording = Some(Rec {
                     spec,
                     path,
@@ -882,10 +879,11 @@ fn run(
         Ok(d) => (App::new(d, config), None),
         Err(e) => (App::new(Vec::new(), config), Some(format!("{e:#}"))),
     };
+    app.status = error;
 
     loop {
         app.poll_recorder();
-        terminal.draw(|f| draw(f, &mut app, error.as_deref()))?;
+        terminal.draw(|f| draw(f, &mut app))?;
 
         if !event::poll(Duration::from_millis(50))? {
             continue;
@@ -897,33 +895,14 @@ fn run(
             continue;
         }
         match app.screen {
-            Screen::Source => match k.code {
+            Screen::Select => match k.code {
                 KeyCode::Char('q') | KeyCode::Esc => return Ok(app),
+                KeyCode::Tab | KeyCode::Right => app.cycle_section(true),
+                KeyCode::BackTab | KeyCode::Left => app.cycle_section(false),
                 KeyCode::Down | KeyCode::Char('j') => app.move_by(1),
                 KeyCode::Up | KeyCode::Char('k') => app.move_by(-1),
                 KeyCode::Char('i') => app.identify(),
-                KeyCode::Char('r') => match run_slurp() {
-                    Ok(src) => app.choose_region(src),
-                    Err(e) => app.status = Some(format!("{e:#}")),
-                },
-                KeyCode::Char('a') => app.choose_audio_only(),
-                KeyCode::Enter => app.choose_display(),
-                _ => {}
-            },
-            Screen::AudioOutput => match k.code {
-                KeyCode::Char('q') => return Ok(app),
-                KeyCode::Esc => app.back_to_source(),
-                KeyCode::Down | KeyCode::Char('j') => app.move_by(1),
-                KeyCode::Up | KeyCode::Char('k') => app.move_by(-1),
-                KeyCode::Enter => app.confirm_output(),
-                _ => {}
-            },
-            Screen::AudioInput => match k.code {
-                KeyCode::Char('q') => return Ok(app),
-                KeyCode::Esc => app.back_to_output(),
-                KeyCode::Down | KeyCode::Char('j') => app.move_by(1),
-                KeyCode::Up | KeyCode::Char('k') => app.move_by(-1),
-                KeyCode::Enter => app.start_recording(),
+                KeyCode::Enter => app.record(),
                 _ => {}
             },
             Screen::Recording => match k.code {
@@ -1005,78 +984,105 @@ fn audio_label(choice: &Option<AudioSource>) -> String {
     }
 }
 
-fn draw(f: &mut Frame, app: &mut App, error: Option<&str>) {
+fn draw(f: &mut Frame, app: &mut App) {
     let chunks = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).split(f.area());
     match app.screen {
-        Screen::Source => draw_source(f, app, error, chunks[0]),
-        Screen::AudioOutput => draw_audio_list(
-            f,
-            " captui - output (system audio) ",
-            &app.output_options,
-            &mut app.output_list,
-            chunks[0],
-        ),
-        Screen::AudioInput => draw_audio_list(
-            f,
-            " captui - input (microphone) ",
-            &app.input_options,
-            &mut app.input_list,
-            chunks[0],
-        ),
+        Screen::Select => draw_select(f, app, chunks[0]),
         Screen::Recording => draw_recording(f, app, chunks[0]),
     }
     draw_footer(f, app, chunks[1]);
 }
 
-fn draw_source(f: &mut Frame, app: &mut App, error: Option<&str>, area: Rect) {
-    let block = Block::default()
-        .title(" captui - select a source ")
-        .borders(Borders::ALL);
-    if let Some(err) = error {
-        f.render_widget(
-            Paragraph::new(err).block(block).style(Style::new().red()),
-            area,
-        );
-    } else if app.displays.is_empty() {
-        f.render_widget(
-            Paragraph::new("no enabled displays found.").block(block),
-            area,
-        );
-    } else {
-        let hints = layout_hints(&app.displays);
-        let items: Vec<ListItem> = app
-            .displays
-            .iter()
-            .zip(hints)
-            .enumerate()
-            .map(|(i, (o, hint))| ListItem::new(row_label(i + 1, o, &hint)))
-            .collect();
-        let list = List::new(items)
-            .block(block)
-            .highlight_symbol("> ")
-            .highlight_spacing(HighlightSpacing::Always)
-            .highlight_style(Style::new().reversed());
-        f.render_stateful_widget(list, area, &mut app.source_list);
+fn display_option_label(app: &App, opt: &DisplayOption, hints: &[String]) -> String {
+    match opt {
+        DisplayOption::Display(i) => match app.displays.get(*i) {
+            Some(o) => row_label(i + 1, o, hints.get(*i).map(String::as_str).unwrap_or("")),
+            None => String::new(),
+        },
+        DisplayOption::Region => "Region (drag-select)".into(),
+        DisplayOption::AudioOnly => "Audio only (no video)".into(),
     }
 }
 
-fn draw_audio_list(
-    f: &mut Frame,
-    title: &str,
-    options: &[Option<AudioSource>],
-    state: &mut ListState,
-    area: Rect,
-) {
-    let block = Block::default().title(title).borders(Borders::ALL);
-    let items: Vec<ListItem> = options
+fn draw_select(f: &mut Frame, app: &mut App, area: Rect) {
+    let cols = Layout::horizontal([
+        Constraint::Percentage(40),
+        Constraint::Percentage(30),
+        Constraint::Percentage(30),
+    ])
+    .split(area);
+
+    let hints = layout_hints(&app.displays);
+    let display_items: Vec<ListItem> = app
+        .display_options
+        .iter()
+        .map(|o| ListItem::new(display_option_label(app, o, &hints)))
+        .collect();
+    draw_pane(
+        f,
+        " Display ",
+        display_items,
+        &mut app.display_list,
+        matches!(app.section, Section::Display),
+        cols[0],
+    );
+
+    let audio_items: Vec<ListItem> = app
+        .audio_options
         .iter()
         .map(|c| ListItem::new(audio_label(c)))
         .collect();
+    draw_pane(
+        f,
+        " Audio ",
+        audio_items,
+        &mut app.audio_list,
+        matches!(app.section, Section::Audio),
+        cols[1],
+    );
+
+    let mic_items: Vec<ListItem> = app
+        .mic_options
+        .iter()
+        .map(|c| ListItem::new(audio_label(c)))
+        .collect();
+    draw_pane(
+        f,
+        " Mic ",
+        mic_items,
+        &mut app.mic_list,
+        matches!(app.section, Section::Mic),
+        cols[2],
+    );
+}
+
+fn draw_pane(
+    f: &mut Frame,
+    title: &str,
+    items: Vec<ListItem>,
+    state: &mut ListState,
+    focused: bool,
+    area: Rect,
+) {
+    let border = if focused {
+        Style::new().cyan()
+    } else {
+        Style::new().dim()
+    };
+    let highlight = if focused {
+        Style::new().reversed()
+    } else {
+        Style::new().bold()
+    };
+    let block = Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_style(border);
     let list = List::new(items)
         .block(block)
         .highlight_symbol("> ")
         .highlight_spacing(HighlightSpacing::Always)
-        .highlight_style(Style::new().reversed());
+        .highlight_style(highlight);
     f.render_stateful_widget(list, area, state);
 }
 
@@ -1088,7 +1094,11 @@ fn draw_recording(f: &mut Frame, app: &App, area: Rect) {
         Some(rec) => {
             let timer = format_duration(rec.elapsed().as_secs());
             let size = format_size(rec.size_bytes());
-            let tag = if app.audio_only { " (audio)" } else { "" };
+            let tag = if matches!(rec.spec, RecSpec::Audio { .. }) {
+                " (audio)"
+            } else {
+                ""
+            };
             let head = if rec.stopped && !rec.saved {
                 Line::from("✗ recording failed".red().bold())
             } else if rec.stopped {
@@ -1136,11 +1146,7 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
     let paused = matches!(&app.recording, Some(r) if r.paused);
     let adjustable = matches!(&app.recording, Some(r) if !r.stopped && !r.paused && r.sources.iter().any(|s| s.sink_input.is_some()));
     let hint = match app.screen {
-        Screen::Source => {
-            " up/down move  i identify  enter display  r region  a audio-only  q quit "
-        }
-        Screen::AudioOutput => " up/down move  enter next (input)  esc back  q quit ",
-        Screen::AudioInput => " up/down move  enter record  esc back  q quit ",
+        Screen::Select => " tab/←→ section  ↑↓ select  enter record  i identify  q quit ",
         Screen::Recording if stopped => {
             let saved = matches!(&app.recording, Some(r) if r.saved);
             if saved && app.config.transcribe_command.is_some() {

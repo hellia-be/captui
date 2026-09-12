@@ -13,6 +13,12 @@ Hand-written, newest first. Not tied to version numbers.
 
 ## Features
 
+- Reworked picker: one screen with three side-by-side panes — Display, Audio, Mic
+  — that TAB (or ←/→) cycles, ↑/↓ selects within, Enter records; it is replaced by
+  the recording view on launch. The Display pane holds each display plus Region
+  and Audio only; the Audio pane lists the outputs (System audio + each monitor)
+  plus None; the Mic pane lists the mics. Replaces the old source -> output ->
+  input wizard.
 - Pause/resume (`p`) that actually works: recording is split into segments — each
   pause finalizes the current segment, resume starts a new one, and stop
   concatenates them with `ffmpeg -c copy` (no re-encode, so no frozen frames or

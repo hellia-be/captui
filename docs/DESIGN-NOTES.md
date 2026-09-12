@@ -3,20 +3,34 @@
 Per-subsystem rationale. Keep each fact in one place; code carries short
 pointers back here rather than long comments.
 
+## Selection UI (src/main.rs)
+
+The picker is a single screen of three side-by-side panes — Display, Audio, Mic —
+that TAB (or left/right) cycles between; up/down selects within the focused pane
+and Enter starts recording, at which point the panes are replaced by the recording
+view. This replaced the earlier source -> output -> input wizard.
+
+The Display pane lists each enabled display, then Region and Audio only. The
+Audio pane lists the outputs to capture — System audio (all) plus each sink's
+monitor, and None. The Mic pane lists the mics plus None. So region and
+audio-only are choices in the Display pane rather than separate keys/screens.
+
+(There is no "all screens" option: wf-recorder captures one output per instance,
+and a region spanning multiple outputs is rejected with "Failed to select
+output". Capturing every screen would need parallel recorders and one file per
+screen.)
+
 ## Sources (src/sources.rs)
 
 wlroots screencopy captures outputs and regions, not surfaces. So captui offers
-a display (`wf-recorder -o <output>`) or a region (`-g "X,Y WxH"`, from slurp).
+a display (`wf-recorder -o <output>`) or a region (`-g "X,Y WxH"`).
 A window is captured as a fixed region derived from the compositor's reported
-geometry (Umbriel/Niri IPC); it does not follow the window if it moves. Multiple
-displays into one file is not native to wf-recorder (one output per instance).
+geometry (Umbriel/Niri IPC); it does not follow the window if it moves.
 
-A region source comes from `slurp`: pressing `r` in the picker spawns slurp for
-an interactive drag-select and captures its `X,Y WxH` on stdout, validated by the
-pure `parse_geometry` (rejects malformed output and zero-area rectangles) into a
-`Source::Region`. Spawning slurp is IO in the app layer; slurp draws its overlay
-through the compositor, so the TUI stays up underneath. Region selection works
-even when no displays enumerated.
+A region source comes from `slurp` (the Display pane's "Region"): on record it
+spawns slurp for an interactive drag-select and captures its `X,Y WxH` on stdout,
+validated by the pure `parse_geometry` (rejects malformed output and zero-area
+rectangles) into a `Source::Region`. Spawning slurp is IO in the app layer.
 
 Displays are enumerated by parsing `wlr-randr`'s plain-text output
 (`parse_wlr_randr`): an output header sits at column 0 as `NAME "DESCRIPTION"`,
@@ -60,21 +74,19 @@ unit-tested. Local runs use `cargo run --features identify`.
 
 ## Audio sources (src/audio.rs)
 
-After a source is chosen, captui asks for the audio in two steps: an **output**
-(system audio) and then an **input** (mic), each independently choosable or None.
-Both are enumerated from `pw-dump`'s JSON (parsed with serde_json in the pure
+Audio is enumerated from `pw-dump`'s JSON (parsed with serde_json in the pure
 `parse_pw_dump`, so CI can test it) rather than by scraping `wpctl status`'s tree.
 Each `Audio/Source` node is a real input, labeled "Mic: <name>"; each `Audio/Sink`
-becomes a "Monitor of <sink>" option whose value is the sink's node name plus
-`.monitor`, the PulseAudio name for a sink's monitor. The default sink
-(`default.audio.sink`) is surfaced as "System audio (all)" and excluded from the
-monitor list. Every mic stays visible by its own name ("Mic: <desc>"); the
-default source (`default.audio.source`) is only marked "(default)" and sorted
-first, never collapsed into an opaque label that hides which physical device it is
-(that hid a user's real mic). The app screens split the flat list by
-`is_monitor`: monitors are the output options, mics the input options. Output
-defaults to System audio; input defaults to the default mic if there is one, else
-None. Running pw-dump is IO in the app layer.
+becomes a monitor whose value is the sink's node name plus `.monitor`, the
+PulseAudio name for a sink's monitor. Every mic stays visible by its own name; the
+default source (`default.audio.source`) is marked "(default)" and sorted first,
+never collapsed into an opaque label that hides which physical device it is (that
+hid a user's real mic).
+
+The UI splits these across the two audio panes by `is_monitor`: the Audio pane
+lists the monitors (System audio (all) first, then each sink's monitor) plus None,
+preselecting `config.audio_output` if set; the Mic pane lists the mics plus None,
+preselecting the configured or default mic.
 
 `audio_target(output, input)` (pure) turns the two choices into one of: Silent
 (neither), Single (exactly one, recorded directly), or Mix (both). For Mix,

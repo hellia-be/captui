@@ -58,6 +58,7 @@ pub struct Output {
     pub enabled: bool,
     pub position: Option<(i32, i32)>,
     pub mode: Option<Mode>,
+    pub scale: f64,
 }
 
 pub fn parse_wlr_randr(s: &str) -> Vec<Output> {
@@ -82,6 +83,7 @@ pub fn parse_wlr_randr(s: &str) -> Vec<Output> {
                 enabled: false,
                 position: None,
                 mode: None,
+                scale: 1.0,
             });
             continue;
         }
@@ -95,6 +97,12 @@ pub fn parse_wlr_randr(s: &str) -> Vec<Output> {
             if let Some((x, y)) = rest.trim().split_once(',') {
                 if let (Ok(x), Ok(y)) = (x.trim().parse(), y.trim().parse()) {
                     last.position = Some((x, y));
+                }
+            }
+        } else if let Some(rest) = t.strip_prefix("Scale:") {
+            if let Ok(scale) = rest.trim().parse::<f64>() {
+                if scale > 0.0 {
+                    last.scale = scale;
                 }
             }
         } else if t.contains("current") {
@@ -249,6 +257,7 @@ HDMI-A-1 \"Samsung S22C300 (HDMI-A-1)\"
                         height: 1200,
                         refresh_hz: 59.950001,
                     }),
+                    scale: 1.0,
                 },
                 Output {
                     name: "HDMI-A-1".into(),
@@ -256,6 +265,7 @@ HDMI-A-1 \"Samsung S22C300 (HDMI-A-1)\"
                     enabled: false,
                     position: None,
                     mode: None,
+                    scale: 1.0,
                 },
             ]
         );
@@ -292,7 +302,14 @@ HDMI-A-1 \"Samsung S22C300 (HDMI-A-1)\"
             enabled: true,
             position: Some((x, y)),
             mode: None,
+            scale: 1.0,
         }
+    }
+
+    #[test]
+    fn parses_scale() {
+        let outputs = parse_wlr_randr("eDP-1\n  Enabled: yes\n  Scale: 1.500000\n");
+        assert_eq!(outputs[0].scale, 1.5);
     }
 
     #[test]
