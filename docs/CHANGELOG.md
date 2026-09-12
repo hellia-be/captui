@@ -13,6 +13,9 @@ Hand-written, newest first. Not tied to version numbers.
 
 ## Features
 
+- Separate output and input level meters: the recording screen shows one bar per
+  chosen source (metering the raw sink monitor and mic directly), so you can see
+  system audio and your mic independently even when they are mixed.
 - Audio-only mode: press `a` on the source screen to skip video and record
   straight to a timestamped `.flac` (via pw-record), reusing the output/input
   pickers and the mix. Lean path for a transcript.

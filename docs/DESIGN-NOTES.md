@@ -134,12 +134,15 @@ recording stops first, so a capture is never left unfinalized.
 
 ## Audio metering (src/meter.rs)
 
-The "is sound coming in" confirmation is a live level bar on the recording
-screen. While recording (and only when an audio source was chosen), a second
-`pw-record --raw --format=f32 --channels=1 --target=<node> -` streams headerless
-mono float samples to stdout; a background thread computes a decaying peak from
-each chunk and publishes it in an atomic. The draw loop reads that atomic and
-renders a bar. `--raw` matters: without it pw-cat wraps stdout in an `.au`
+The "is sound coming in" confirmation is a live level bar per chosen source on
+the recording screen: an "output" bar and/or an "input" bar. Each meters the raw
+chosen node (the sink monitor and/or the mic) directly, not the mixed
+`captui_mix.monitor`, so the two levels stay separate even when both are being
+mixed into the recording. Each bar is a `pw-record --raw --format=f32
+--channels=1 --target=<node> -` streaming headerless mono float samples to
+stdout; a background thread computes a decaying peak from each chunk and
+publishes it in an atomic. The draw loop reads those atomics and renders the
+bars. `--raw` matters: without it pw-cat wraps stdout in an `.au`
 container (big-endian), which would garble the little-endian float parse. The
 sample-to-peak and level-to-bar helpers are pure and unit-tested; the process and
 reader thread are IO in src/main.rs, torn down (child killed, thread joined) when
