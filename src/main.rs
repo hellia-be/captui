@@ -241,6 +241,7 @@ fn spawn_meter(node: &str) -> Option<Meter> {
             "--format=float32le",
             "--rate=48000",
             "--channels=1",
+            "--latency-msec=30",
         ])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -606,7 +607,7 @@ fn run(
     loop {
         terminal.draw(|f| draw(f, &mut app, error.as_deref()))?;
 
-        if !event::poll(Duration::from_millis(100))? {
+        if !event::poll(Duration::from_millis(50))? {
             continue;
         }
         let Event::Key(k) = event::read()? else {

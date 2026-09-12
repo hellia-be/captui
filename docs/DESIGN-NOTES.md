@@ -121,7 +121,7 @@ audio node (omitting `--audio` when the user picked "No audio").
 The recording screen shows a live status panel: an elapsed timer and the growing
 output file size. The timer runs off an `Instant` captured at spawn and freezes
 at the value sampled on stop; the size is read from the file's metadata each
-draw (the loop redraws ~10x/s). Duration and byte formatting are pure helpers in
+draw (the loop redraws ~20x/s). Duration and byte formatting are pure helpers in
 src/format.rs, unit-tested in CI.
 
 Video quality is set explicitly instead of relying on wf-recorder's defaults,
@@ -148,9 +148,11 @@ the recording screen: an "output" bar and/or an "input" bar. Each meters the raw
 chosen node (the sink monitor and/or the mic) directly, not the mixed
 `captui_mix.monitor`, so the two levels stay separate even when both are being
 mixed into the recording. Each bar is a `parec --device=<node> --format=float32le
---rate=48000 --channels=1` streaming headerless mono float samples to stdout; a
-background thread computes a decaying peak from each chunk and publishes it in an
-atomic. The draw loop reads those atomics and renders the bars.
+--rate=48000 --channels=1 --latency-msec=30` streaming headerless mono float
+samples to stdout; a background thread computes a decaying peak from each chunk
+and publishes it in an atomic. The draw loop reads those atomics and renders the
+bars. The low `--latency-msec` matters: parec's default buffering delivers large
+fragments, which makes the meter lag; a small buffer keeps it responsive.
 
 parec (PulseAudio), not pw-record, because the meter must accept the same source
 names the recorder uses, including a sink monitor `<sink>.monitor`. pw-record's
