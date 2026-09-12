@@ -13,6 +13,9 @@ Hand-written, newest first. Not tied to version numbers.
 
 ## Features
 
+- wl-screenrec backend: set `backend = "wl-screenrec"` in the config to record
+  A/V with hardware (VAAPI) encoding instead of wf-recorder's software libx264;
+  default stays `wf-recorder`. Audio-only mode is unaffected (always pw-record).
 - New recording without restarting: after stopping, press `n` on the recording
   screen to return to the source picker and record again.
 - Whisper handoff: with `transcribe_command` set in the config, the stopped

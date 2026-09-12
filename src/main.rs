@@ -33,7 +33,7 @@ use captui::audio::{
 use captui::config::{parse_config, Config};
 use captui::format::{format_duration, format_size};
 use captui::meter::{meter_bar, samples_peak};
-use captui::recorder::{extension, timestamped_name, transcribe_argv, wf_recorder_argv, Mode};
+use captui::recorder::{extension, timestamped_name, transcribe_argv, Backend, Mode};
 use captui::sources::{
     layout_hints, parse_geometry, parse_wlr_randr, region, sort_reading_order, Output, Source,
 };
@@ -122,8 +122,13 @@ fn spawn_audio_recorder(node: &str, out: &Path) -> Result<Child> {
         .context("could not spawn pw-record")
 }
 
-fn spawn_recorder(source: &Source, audio: Option<&str>, out: &Path) -> Result<Child> {
-    let argv = wf_recorder_argv(source, audio, &out.to_string_lossy());
+fn spawn_recorder(
+    backend: Backend,
+    source: &Source,
+    audio: Option<&str>,
+    out: &Path,
+) -> Result<Child> {
+    let argv = backend.argv(source, audio, &out.to_string_lossy());
     Command::new(&argv[0])
         .args(&argv[1..])
         .stdin(Stdio::null())
@@ -547,8 +552,9 @@ impl App {
                 None => return,
             }
         } else {
+            let backend = Backend::from_config(self.config.backend.as_deref());
             match self.pending_source.as_ref() {
-                Some(source) => spawn_recorder(source, audio_node.as_deref(), &path),
+                Some(source) => spawn_recorder(backend, source, audio_node.as_deref(), &path),
                 None => return,
             }
         };
