@@ -58,6 +58,7 @@ pub struct Output {
     pub enabled: bool,
     pub position: Option<(i32, i32)>,
     pub mode: Option<Mode>,
+    pub scale: f64,
 }
 
 pub fn parse_wlr_randr(s: &str) -> Vec<Output> {
@@ -82,6 +83,7 @@ pub fn parse_wlr_randr(s: &str) -> Vec<Output> {
                 enabled: false,
                 position: None,
                 mode: None,
+                scale: 1.0,
             });
             continue;
         }
@@ -97,6 +99,12 @@ pub fn parse_wlr_randr(s: &str) -> Vec<Output> {
                     last.position = Some((x, y));
                 }
             }
+        } else if let Some(rest) = t.strip_prefix("Scale:") {
+            if let Ok(scale) = rest.trim().parse::<f64>() {
+                if scale > 0.0 {
+                    last.scale = scale;
+                }
+            }
         } else if t.contains("current") {
             if let Some(m) = parse_mode_line(t) {
                 last.mode = Some(m);
@@ -104,6 +112,34 @@ pub fn parse_wlr_randr(s: &str) -> Vec<Output> {
         }
     }
     outputs
+}
+
+pub fn all_screens_region(outputs: &[Output]) -> Option<String> {
+    let (mut min_x, mut min_y) = (i32::MAX, i32::MAX);
+    let (mut max_x, mut max_y) = (i32::MIN, i32::MIN);
+    let mut found = false;
+    for o in outputs {
+        let (Some((x, y)), Some(mode)) = (o.position, o.mode) else {
+            continue;
+        };
+        let scale = if o.scale > 0.0 { o.scale } else { 1.0 };
+        let w = (f64::from(mode.width) / scale).round() as i32;
+        let h = (f64::from(mode.height) / scale).round() as i32;
+        min_x = min_x.min(x);
+        min_y = min_y.min(y);
+        max_x = max_x.max(x + w);
+        max_y = max_y.max(y + h);
+        found = true;
+    }
+    if !found {
+        return None;
+    }
+    Some(region(
+        min_x,
+        min_y,
+        (max_x - min_x) as u32,
+        (max_y - min_y) as u32,
+    ))
 }
 
 fn parse_mode_line(t: &str) -> Option<Mode> {
@@ -249,6 +285,7 @@ HDMI-A-1 \"Samsung S22C300 (HDMI-A-1)\"
                         height: 1200,
                         refresh_hz: 59.950001,
                     }),
+                    scale: 1.0,
                 },
                 Output {
                     name: "HDMI-A-1".into(),
@@ -256,6 +293,7 @@ HDMI-A-1 \"Samsung S22C300 (HDMI-A-1)\"
                     enabled: false,
                     position: None,
                     mode: None,
+                    scale: 1.0,
                 },
             ]
         );
@@ -292,7 +330,57 @@ HDMI-A-1 \"Samsung S22C300 (HDMI-A-1)\"
             enabled: true,
             position: Some((x, y)),
             mode: None,
+            scale: 1.0,
         }
+    }
+
+    fn sized(x: i32, y: i32, w: u32, h: u32, scale: f64) -> Output {
+        Output {
+            name: "x".into(),
+            description: String::new(),
+            enabled: true,
+            position: Some((x, y)),
+            mode: Some(Mode {
+                width: w,
+                height: h,
+                refresh_hz: 60.0,
+            }),
+            scale,
+        }
+    }
+
+    #[test]
+    fn parses_scale() {
+        let outputs = parse_wlr_randr("eDP-1\n  Enabled: yes\n  Scale: 1.500000\n");
+        assert_eq!(outputs[0].scale, 1.5);
+    }
+
+    #[test]
+    fn all_screens_region_is_logical_bounding_box() {
+        let outputs = vec![
+            sized(0, 0, 2560, 1440, 1.0),
+            sized(2560, 0, 1920, 1080, 1.0),
+        ];
+        assert_eq!(
+            all_screens_region(&outputs).as_deref(),
+            Some("0,0 4480x1440")
+        );
+    }
+
+    #[test]
+    fn all_screens_region_uses_scale_for_logical_size() {
+        // 3840x2160 at scale 2 is 1920x1080 logical.
+        let outputs = vec![sized(0, 0, 3840, 2160, 2.0)];
+        assert_eq!(
+            all_screens_region(&outputs).as_deref(),
+            Some("0,0 1920x1080")
+        );
+    }
+
+    #[test]
+    fn all_screens_region_none_without_geometry() {
+        assert_eq!(all_screens_region(&[at(0, 0)]), None);
+        assert_eq!(all_screens_region(&[]), None);
     }
 
     #[test]
