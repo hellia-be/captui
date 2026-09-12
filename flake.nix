@@ -19,6 +19,7 @@
           wlr-randr
           pipewire # pw-record, pw-dump
           wireplumber # wpctl
+          pulseaudio # pactl, for the null-sink mix when both output and input are chosen
         ];
       in
       {

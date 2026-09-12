@@ -7,6 +7,25 @@ pub struct AudioSource {
     pub is_monitor: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AudioTarget {
+    Silent,
+    Single(String),
+    Mix { output: String, input: String },
+}
+
+pub fn audio_target(output: Option<&str>, input: Option<&str>) -> AudioTarget {
+    match (output, input) {
+        (None, None) => AudioTarget::Silent,
+        (Some(o), None) => AudioTarget::Single(o.to_string()),
+        (None, Some(i)) => AudioTarget::Single(i.to_string()),
+        (Some(o), Some(i)) => AudioTarget::Mix {
+            output: o.to_string(),
+            input: i.to_string(),
+        },
+    }
+}
+
 pub fn parse_pw_dump(json: &str) -> Vec<AudioSource> {
     let Ok(value) = serde_json::from_str::<serde_json::Value>(json) else {
         return Vec::new();
@@ -17,7 +36,9 @@ pub fn parse_pw_dump(json: &str) -> Vec<AudioSource> {
 
     let default_sink = default_meta(objects, "default.audio.sink");
     let default_source = default_meta(objects, "default.audio.source");
-    let mut mics = Vec::new();
+    // Mics are collected as (is_default, description, node_name) so the default
+    // one can sort first and be marked, while every mic stays visible by name.
+    let mut mics: Vec<(bool, String, String)> = Vec::new();
     let mut monitors = Vec::new();
     for obj in objects {
         let props = &obj["info"]["props"];
@@ -30,12 +51,9 @@ pub fn parse_pw_dump(json: &str) -> Vec<AudioSource> {
             .filter(|s| !s.is_empty())
             .unwrap_or(name);
         let class = props["media.class"].as_str().unwrap_or("");
-        if class.starts_with("Audio/Source") && default_source.as_deref() != Some(name) {
-            mics.push(AudioSource {
-                node_name: name.to_string(),
-                description: format!("Mic: {description}"),
-                is_monitor: false,
-            });
+        if class.starts_with("Audio/Source") {
+            let is_default = default_source.as_deref() == Some(name);
+            mics.push((is_default, description.to_string(), name.to_string()));
         } else if class == "Audio/Sink" && default_sink.as_deref() != Some(name) {
             monitors.push(AudioSource {
                 node_name: format!("{name}.monitor"),
@@ -45,7 +63,7 @@ pub fn parse_pw_dump(json: &str) -> Vec<AudioSource> {
         }
     }
 
-    mics.sort_by(|a, b| a.description.cmp(&b.description));
+    mics.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
     monitors.sort_by(|a, b| a.description.cmp(&b.description));
 
     let mut sources = Vec::new();
@@ -56,14 +74,18 @@ pub fn parse_pw_dump(json: &str) -> Vec<AudioSource> {
             is_monitor: true,
         });
     }
-    if let Some(source) = default_source {
-        sources.push(AudioSource {
-            node_name: source,
-            description: "Microphone (default)".to_string(),
-            is_monitor: false,
-        });
-    }
-    sources.extend(mics);
+    sources.extend(
+        mics.into_iter()
+            .map(|(is_default, desc, node_name)| AudioSource {
+                node_name,
+                description: if is_default {
+                    format!("Mic: {desc} (default)")
+                } else {
+                    format!("Mic: {desc}")
+                },
+                is_monitor: false,
+            }),
+    );
     sources.extend(monitors);
     sources
 }
@@ -139,7 +161,7 @@ mod tests {
     }
 
     #[test]
-    fn default_source_becomes_default_microphone_without_duplicate() {
+    fn default_mic_is_named_marked_and_first() {
         let json = r#"[
           { "metadata": [
               { "key": "default.audio.source", "value": { "name": "mic_a" } } ] },
@@ -156,7 +178,7 @@ mod tests {
             vec![
                 AudioSource {
                     node_name: "mic_a".into(),
-                    description: "Microphone (default)".into(),
+                    description: "Mic: Headset (default)".into(),
                     is_monitor: false,
                 },
                 AudioSource {
@@ -172,6 +194,26 @@ mod tests {
     fn bad_json_is_empty() {
         assert!(parse_pw_dump("not json").is_empty());
         assert!(parse_pw_dump("{}").is_empty());
+    }
+
+    #[test]
+    fn audio_target_combines_output_and_input() {
+        assert_eq!(audio_target(None, None), AudioTarget::Silent);
+        assert_eq!(
+            audio_target(Some("mon"), None),
+            AudioTarget::Single("mon".into())
+        );
+        assert_eq!(
+            audio_target(None, Some("mic")),
+            AudioTarget::Single("mic".into())
+        );
+        assert_eq!(
+            audio_target(Some("mon"), Some("mic")),
+            AudioTarget::Mix {
+                output: "mon".into(),
+                input: "mic".into()
+            }
+        );
     }
 
     #[test]

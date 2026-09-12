@@ -13,6 +13,14 @@ Hand-written, newest first. Not tied to version numbers.
 
 ## Features
 
+- Select output and input independently: the audio step is now two screens, an
+  output (system audio) and an input (mic), each choosable or None. When both are
+  set, captui builds a temporary PipeWire mix (a `captui_mix` null sink fed by a
+  loopback from each source) and records its monitor, then tears the mix down on
+  stop; one source records directly; neither is silent. Adds pactl (pulseaudio)
+  as a runtime dependency. Every mic is listed by its real name with the default
+  marked "(default)" and preselected, instead of hiding the default behind an
+  opaque label.
 - Clearer microphone selection: mics are now labeled "Mic: <name>", and the
   default input is surfaced as a "Microphone (default)" option alongside "System
   audio (all)", so choosing a specific mic among several is obvious.

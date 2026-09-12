@@ -60,18 +60,31 @@ unit-tested. Local runs use `cargo run --features identify`.
 
 ## Audio sources (src/audio.rs)
 
-After a source is chosen, the picker offers an audio source. They are enumerated
-from `pw-dump`'s JSON (parsed with serde_json in the pure `parse_pw_dump`, so CI
-can test it) rather than by scraping `wpctl status`'s tree. Each `Audio/Source`
-node is a real input, labeled "Mic: <name>"; each `Audio/Sink` becomes a
-"Monitor of <sink>" option whose value is the sink's node name plus `.monitor`,
-the PulseAudio name for a sink's monitor. The two defaults from metadata are
-surfaced first as plain options: the default sink (`default.audio.sink`) as
-"System audio (all)" and the default source (`default.audio.source`) as
-"Microphone (default)"; each is excluded from the per-device lists below to
-avoid a duplicate. Order: System audio, Microphone (default), then other mics,
-then other monitors, then "No audio (silent)"; the first is preselected. Running
-pw-dump is IO in the app layer.
+After a source is chosen, captui asks for the audio in two steps: an **output**
+(system audio) and then an **input** (mic), each independently choosable or None.
+Both are enumerated from `pw-dump`'s JSON (parsed with serde_json in the pure
+`parse_pw_dump`, so CI can test it) rather than by scraping `wpctl status`'s tree.
+Each `Audio/Source` node is a real input, labeled "Mic: <name>"; each `Audio/Sink`
+becomes a "Monitor of <sink>" option whose value is the sink's node name plus
+`.monitor`, the PulseAudio name for a sink's monitor. The default sink
+(`default.audio.sink`) is surfaced as "System audio (all)" and excluded from the
+monitor list. Every mic stays visible by its own name ("Mic: <desc>"); the
+default source (`default.audio.source`) is only marked "(default)" and sorted
+first, never collapsed into an opaque label that hides which physical device it is
+(that hid a user's real mic). The app screens split the flat list by
+`is_monitor`: monitors are the output options, mics the input options. Output
+defaults to System audio; input defaults to the default mic if there is one, else
+None. Running pw-dump is IO in the app layer.
+
+`audio_target(output, input)` (pure) turns the two choices into one of: Silent
+(neither), Single (exactly one, recorded directly), or Mix (both). For Mix,
+captui builds a temporary PipeWire graph via pactl: a `module-null-sink` named
+`captui_mix`, plus a `module-loopback` from each chosen source into it, then
+records `captui_mix.monitor`. The loaded module ids are tracked and unloaded in
+reverse on stop or drop (an `AudioMix` `Drop`), so the graph never leaks; wf-
+recorder is finalized first, then the mix is torn down. This is why pactl
+(pulseaudio) is a runtime dependency. A short loopback latency (20ms) keeps the
+mixed audio close to video.
 
 The value carried forward is the node name passed to wf-recorder. It must be
 given as `--audio=<node>` (the attached form): wf-recorder's `-a`/`--audio` takes
