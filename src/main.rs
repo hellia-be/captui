@@ -11,7 +11,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -111,13 +111,40 @@ fn output_path(cfg: &Config, mode: Mode) -> Result<PathBuf> {
     Ok(dir.join(timestamped_name(secs, &ext)))
 }
 
+fn capture_stderr(child: &mut Child) -> Arc<Mutex<String>> {
+    let buf = Arc::new(Mutex::new(String::new()));
+    if let Some(err) = child.stderr.take() {
+        let shared = buf.clone();
+        std::thread::spawn(move || {
+            let mut text = String::new();
+            let _ = std::io::BufReader::new(err).read_to_string(&mut text);
+            if let Ok(mut b) = shared.lock() {
+                *b = text;
+            }
+        });
+    }
+    buf
+}
+
+fn stderr_tail(buf: &Arc<Mutex<String>>) -> String {
+    buf.lock()
+        .ok()
+        .and_then(|b| {
+            b.lines()
+                .rev()
+                .find(|l| !l.trim().is_empty())
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| "no output produced".into())
+}
+
 fn spawn_audio_recorder(node: &str, out: &Path) -> Result<Child> {
     Command::new("pw-record")
         .arg(format!("--target={node}"))
         .arg(out)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .spawn()
         .context("could not spawn pw-record")
 }
@@ -133,7 +160,7 @@ fn spawn_recorder(
         .args(&argv[1..])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .spawn()
         .with_context(|| format!("could not spawn {} (is it installed?)", argv[0]))
 }
@@ -314,8 +341,10 @@ struct Rec {
     child: Child,
     path: PathBuf,
     stopped: bool,
+    saved: bool,
     started: Instant,
     final_elapsed: Option<Duration>,
+    stderr: Arc<Mutex<String>>,
     sources: Vec<SourceControl>,
     focus: usize,
     mix: Option<AudioMix>,
@@ -381,7 +410,7 @@ impl App {
 
     fn request_transcribe(&mut self) -> bool {
         let ready = self.config.transcribe_command.is_some()
-            && matches!(&self.recording, Some(r) if r.stopped);
+            && matches!(&self.recording, Some(r) if r.stopped && r.saved);
         if ready {
             self.transcribe = true;
         }
@@ -560,7 +589,8 @@ impl App {
         };
 
         match spawned {
-            Ok(child) => {
+            Ok(mut child) => {
+                let stderr = capture_stderr(&mut child);
                 let mut sources = Vec::new();
                 if let Some(meter) = output.as_deref().and_then(spawn_meter) {
                     sources.push(SourceControl {
@@ -583,8 +613,10 @@ impl App {
                     child,
                     path,
                     stopped: false,
+                    saved: false,
                     started: Instant::now(),
                     final_elapsed: None,
+                    stderr,
                     sources,
                     focus: 0,
                     mix,
@@ -627,14 +659,39 @@ impl App {
         }
         rec.final_elapsed = Some(rec.started.elapsed());
         rec.sources.clear();
-        self.status = match stop_recorder(&mut rec.child) {
-            Ok(()) => {
-                rec.stopped = true;
-                None
-            }
-            Err(e) => Some(format!("stop failed: {e:#}")),
-        };
+        let _ = stop_recorder(&mut rec.child);
+        rec.stopped = true;
         rec.mix = None;
+        rec.saved = std::fs::metadata(&rec.path)
+            .map(|m| m.len() > 0)
+            .unwrap_or(false);
+        self.status = if rec.saved {
+            None
+        } else {
+            Some(format!("recording failed: {}", stderr_tail(&rec.stderr)))
+        };
+    }
+
+    fn poll_recorder(&mut self) {
+        let Some(rec) = self.recording.as_mut() else {
+            return;
+        };
+        if rec.stopped {
+            return;
+        }
+        // The recorder exiting on its own means it crashed or refused to start.
+        if matches!(rec.child.try_wait(), Ok(Some(_))) {
+            rec.final_elapsed = Some(rec.elapsed());
+            rec.sources.clear();
+            rec.stopped = true;
+            rec.mix = None;
+            rec.saved = std::fs::metadata(&rec.path)
+                .map(|m| m.len() > 0)
+                .unwrap_or(false);
+            if !rec.saved {
+                self.status = Some(format!("recording failed: {}", stderr_tail(&rec.stderr)));
+            }
+        }
     }
 }
 
@@ -655,9 +712,13 @@ fn main() -> Result<()> {
 
     let app = res?;
     if let Some(rec) = &app.recording {
-        println!("recording saved: {}", rec.path.display());
-        if app.transcribe {
-            run_transcribe(&app.config, &rec.path);
+        if rec.saved {
+            println!("recording saved: {}", rec.path.display());
+            if app.transcribe {
+                run_transcribe(&app.config, &rec.path);
+            }
+        } else {
+            eprintln!("recording failed: {}", stderr_tail(&rec.stderr));
         }
     }
     Ok(())
@@ -689,6 +750,7 @@ fn run(
     };
 
     loop {
+        app.poll_recorder();
         terminal.draw(|f| draw(f, &mut app, error.as_deref()))?;
 
         if !event::poll(Duration::from_millis(50))? {
@@ -892,7 +954,9 @@ fn draw_recording(f: &mut Frame, app: &App, area: Rect) {
             let timer = format_duration(rec.elapsed().as_secs());
             let size = format_size(rec.size_bytes());
             let tag = if app.audio_only { " (audio)" } else { "" };
-            let head = if rec.stopped {
+            let head = if rec.stopped && !rec.saved {
+                Line::from("✗ recording failed".red().bold())
+            } else if rec.stopped {
                 Line::from(vec![format!("■ stopped{tag}  ").green(), timer.into()])
             } else {
                 Line::from(vec![format!("● REC{tag}  ").red().bold(), timer.into()])
@@ -915,9 +979,9 @@ fn draw_recording(f: &mut Frame, app: &App, area: Rect) {
                     meter_bar(src.meter.level(), 24)
                 )));
             }
-            let file_label = if rec.stopped { "saved" } else { "file" };
+            let file_label = if rec.saved { "saved" } else { "file" };
             lines.push(Line::from(format!("{file_label}: {}", rec.path.display())));
-            if rec.stopped && app.config.transcribe_command.is_some() {
+            if rec.saved && app.config.transcribe_command.is_some() {
                 lines.push(Line::from("press t to transcribe".cyan()));
             }
             Text::from(lines)
@@ -937,7 +1001,8 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
         Screen::AudioOutput => " up/down move  enter next (input)  esc back  q quit ",
         Screen::AudioInput => " up/down move  enter record  esc back  q quit ",
         Screen::Recording if stopped => {
-            if app.config.transcribe_command.is_some() {
+            let saved = matches!(&app.recording, Some(r) if r.saved);
+            if saved && app.config.transcribe_command.is_some() {
                 " n new recording  t transcribe  q quit "
             } else {
                 " n new recording  q quit "
