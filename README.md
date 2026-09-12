@@ -5,7 +5,8 @@ Wayland, with a live status view (audio meter, elapsed time, file size) and
 one-key start/stop. Recordings feed a Whisper transcription flow. Rust +
 ratatui, packaged as a Nix flake.
 
-Status: early scaffold. See docs/ROADMAP.md.
+Status: working recorder (source/region picker, output+input audio with mixing,
+live meters, timer/size, video and audio-only modes). See docs/ROADMAP.md.
 
 ## What it does
 
@@ -29,8 +30,22 @@ Status: early scaffold. See docs/ROADMAP.md.
 ## Requirements
 
 A wlroots Wayland compositor (Umbriel, Niri, LabWC, Sway, ...) and PipeWire.
-Runtime tools: wf-recorder (or wl-screenrec), slurp, wlr-randr, and the PipeWire
-CLIs (pw-record, pw-dump, wpctl). The dev shell provides them.
+Runtime tools: wf-recorder (or wl-screenrec), slurp, wlr-randr, the PipeWire CLIs
+(pw-record, pw-dump, wpctl), and pactl/parec (pulseaudio) for the audio mix and
+level meters. The packaged binary and the dev shell provide them.
+
+## Configuration
+
+Optional `~/.config/captui/config.toml`, all keys optional:
+
+    output_dir = "~/Videos/captures"   # where recordings are written
+    container = "mkv"                   # A/V file extension (audio-only is flac)
+    audio_output = "alsa_output.pci-0000_01_00.1.hdmi-stereo.monitor"
+    audio_input = "alsa_input.usb-Razer_..."
+
+`audio_output` / `audio_input` are PipeWire node names (as shown by
+`pactl list short sources`) to preselect in the pickers. A missing or malformed
+file falls back to built-in defaults.
 
 ## Getting started
 

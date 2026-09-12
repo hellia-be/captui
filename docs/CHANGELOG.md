@@ -13,6 +13,10 @@ Hand-written, newest first. Not tied to version numbers.
 
 ## Features
 
+- Config file: `~/.config/captui/config.toml` sets optional defaults — output
+  directory (with `~` expansion), A/V container extension, and a preselected
+  audio output/input by node name. Missing or malformed config falls back to
+  built-in defaults.
 - Per-source mix volume: when mixing output + input, the recording screen lets
   you focus a source (up/down) and adjust its level (left/right) with a live
   percentage, applied to that loopback's stream only, never system volume.
