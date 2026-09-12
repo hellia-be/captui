@@ -13,4 +13,4 @@ All P1 items are done. See docs/CHANGELOG.md.
 2. Whisper handoff (configured transcription command after stop).
 3. wl-screenrec backend option (hardware encode).
 4. Config file (default output dir, container, default audio source).
-5. Separate input/output level meters, with per-source volume control.
+5. Per-source volume control for the mix (adjust output and input levels).

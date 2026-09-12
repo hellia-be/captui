@@ -232,7 +232,7 @@ struct Rec {
     stopped: bool,
     started: Instant,
     final_elapsed: Option<Duration>,
-    meter: Option<Meter>,
+    meters: Vec<(&'static str, Meter)>,
     mix: Option<AudioMix>,
 }
 
@@ -440,7 +440,13 @@ impl App {
 
         match spawned {
             Ok(child) => {
-                let meter = audio_node.as_deref().and_then(spawn_meter);
+                let mut meters = Vec::new();
+                if let Some(node) = output.as_deref().and_then(spawn_meter) {
+                    meters.push(("output", node));
+                }
+                if let Some(node) = input.as_deref().and_then(spawn_meter) {
+                    meters.push(("input", node));
+                }
                 self.pending_source = None;
                 self.recording = Some(Rec {
                     child,
@@ -448,7 +454,7 @@ impl App {
                     stopped: false,
                     started: Instant::now(),
                     final_elapsed: None,
-                    meter,
+                    meters,
                     mix,
                 });
                 self.status = None;
@@ -468,7 +474,7 @@ impl App {
             return;
         }
         rec.final_elapsed = Some(rec.started.elapsed());
-        rec.meter = None;
+        rec.meters.clear();
         let msg = match stop_recorder(&mut rec.child) {
             Ok(()) => {
                 rec.stopped = true;
@@ -706,9 +712,9 @@ fn draw_recording(f: &mut Frame, app: &App, area: Rect) {
                 Line::from(vec![format!("● REC{tag}  ").red().bold(), timer.into()])
             };
             let mut lines = vec![head, Line::from(format!("size: {size}"))];
-            if let Some(meter) = &rec.meter {
+            for (label, meter) in &rec.meters {
                 lines.push(Line::from(format!(
-                    "audio: {}",
+                    "{label:>6}: {}",
                     meter_bar(meter.level(), 24)
                 )));
             }
