@@ -133,10 +133,18 @@ source and `-f` output; they differ on audio — wf-recorder wants the attached
 mode always uses pw-record regardless of backend. wl-screenrec's hardware VAAPI
 path fails to negotiate a capture format on NVIDIA (block-linear dmabuf
 modifiers), so `no_hw = true` in the config adds `--no-hw` (software encode) and
-NVIDIA users are better off on the default wf-recorder. Neither recorder supports
-pausing (SIGSTOP desyncs audio because the audio server buffers through the
-freeze; wl-screenrec has no pause either), so captui does not offer pause; a
-clean pause would require recording in segments and concatenating.
+NVIDIA users are better off on the default wf-recorder.
+
+Pause (`p`) works by segments, because no wlroots recorder pauses natively and
+SIGSTOP desyncs audio (the audio server buffers through the freeze). Each capture
+records to numbered part files (`<name>.partN.<ext>` via `segment_path`); pausing
+stops the current recorder (finalizing that part), resuming spawns a fresh
+recorder for the next part, and stop concatenates the parts into the final file
+with `ffmpeg -f concat -c copy` (stream copy, no re-encode, so no frozen frames or
+drift). A single part (never paused) is just renamed. The pact/mix and the meters
+stay up across a pause; the displayed timer excludes paused time. This is why
+ffmpeg is a runtime dependency. `segment_path`, `concat_list_line`, and
+`ffmpeg_concat_argv` are pure and tested; the spawn/concat IO is in the app layer.
 
 Video quality is set explicitly instead of relying on wf-recorder's defaults,
 which look soft (especially screen text): software libx264 at `crf=18` (visually
