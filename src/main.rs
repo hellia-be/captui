@@ -38,8 +38,7 @@ use captui::recorder::{
     transcribe_argv, Backend, Mode,
 };
 use captui::sources::{
-    all_screens_region, layout_hints, parse_geometry, parse_wlr_randr, region, sort_reading_order,
-    Output, Source,
+    layout_hints, parse_geometry, parse_wlr_randr, region, sort_reading_order, Output, Source,
 };
 
 #[cfg(feature = "identify")]
@@ -427,7 +426,6 @@ enum Section {
 enum DisplayOption {
     Display(usize),
     Region,
-    AllScreens,
     AudioOnly,
 }
 
@@ -435,8 +433,8 @@ struct App {
     displays: Vec<Output>,
     display_options: Vec<DisplayOption>,
     display_list: ListState,
+    audio_options: Vec<Option<AudioSource>>,
     audio_list: ListState,
-    system_audio: Option<String>,
     mic_options: Vec<Option<AudioSource>>,
     mic_list: ListState,
     section: Section,
@@ -447,40 +445,37 @@ struct App {
     transcribe: bool,
 }
 
+fn select_node(options: &[Option<AudioSource>], want: Option<&str>) -> Option<usize> {
+    want.and_then(|w| {
+        options
+            .iter()
+            .position(|o| o.as_ref().is_some_and(|a| a.node_name == w))
+    })
+}
+
 impl App {
     fn new(displays: Vec<Output>, config: Config) -> Self {
         let audio = enumerate_audio().unwrap_or_default();
-        let system_audio = config.audio_output.clone().or_else(|| {
-            audio
-                .iter()
-                .find(|a| a.is_monitor)
-                .map(|a| a.node_name.clone())
-        });
-        let mut mic_options: Vec<Option<AudioSource>> = audio
-            .into_iter()
-            .filter(|a| !a.is_monitor)
-            .map(Some)
-            .collect();
+        let (monitors, mics): (Vec<_>, Vec<_>) = audio.into_iter().partition(|a| a.is_monitor);
+        let mut audio_options: Vec<Option<AudioSource>> = monitors.into_iter().map(Some).collect();
+        audio_options.push(None);
+        let mut mic_options: Vec<Option<AudioSource>> = mics.into_iter().map(Some).collect();
         mic_options.push(None);
 
         let mut display_options: Vec<DisplayOption> =
             (0..displays.len()).map(DisplayOption::Display).collect();
         display_options.push(DisplayOption::Region);
-        display_options.push(DisplayOption::AllScreens);
         display_options.push(DisplayOption::AudioOnly);
 
         let mut display_list = ListState::default();
         display_list.select(Some(0));
-        let mut audio_list = ListState::default();
-        audio_list.select(Some(0));
 
-        let want_mic = config.audio_input.as_deref();
-        let mic_sel = want_mic
-            .and_then(|w| {
-                mic_options
-                    .iter()
-                    .position(|o| o.as_ref().is_some_and(|a| a.node_name == w))
-            })
+        let mut audio_list = ListState::default();
+        audio_list.select(Some(
+            select_node(&audio_options, config.audio_output.as_deref()).unwrap_or(0),
+        ));
+
+        let mic_sel = select_node(&mic_options, config.audio_input.as_deref())
             .or_else(|| {
                 mic_options.iter().position(|o| {
                     o.as_ref()
@@ -495,8 +490,8 @@ impl App {
             displays,
             display_options,
             display_list,
+            audio_options,
             audio_list,
-            system_audio,
             mic_options,
             mic_list,
             section: Section::Display,
@@ -528,7 +523,7 @@ impl App {
     fn active_list(&mut self) -> (&mut ListState, usize) {
         match self.section {
             Section::Display => (&mut self.display_list, self.display_options.len()),
-            Section::Audio => (&mut self.audio_list, 2),
+            Section::Audio => (&mut self.audio_list, self.audio_options.len()),
             Section::Mic => (&mut self.mic_list, self.mic_options.len()),
         }
     }
@@ -570,21 +565,14 @@ impl App {
                     return;
                 }
             },
-            Some(DisplayOption::AllScreens) => match all_screens_region(&self.displays) {
-                Some(geom) => (Some(Source::Region(geom)), false),
-                None => {
-                    self.status = Some("no displays to capture".into());
-                    return;
-                }
-            },
             Some(DisplayOption::AudioOnly) => (None, true),
             None => return,
         };
-        let output = if self.audio_list.selected() == Some(0) {
-            self.system_audio.clone()
-        } else {
-            None
-        };
+        let output = self
+            .audio_list
+            .selected()
+            .and_then(|i| self.audio_options.get(i))
+            .and_then(|c| c.as_ref().map(|a| a.node_name.clone()));
         let input = self
             .mic_list
             .selected()
@@ -1012,16 +1000,15 @@ fn display_option_label(app: &App, opt: &DisplayOption, hints: &[String]) -> Str
             None => String::new(),
         },
         DisplayOption::Region => "Region (drag-select)".into(),
-        DisplayOption::AllScreens => "All screens".into(),
         DisplayOption::AudioOnly => "Audio only (no video)".into(),
     }
 }
 
 fn draw_select(f: &mut Frame, app: &mut App, area: Rect) {
     let cols = Layout::horizontal([
-        Constraint::Percentage(50),
-        Constraint::Percentage(25),
-        Constraint::Percentage(25),
+        Constraint::Percentage(40),
+        Constraint::Percentage(30),
+        Constraint::Percentage(30),
     ])
     .split(area);
 
@@ -1040,7 +1027,11 @@ fn draw_select(f: &mut Frame, app: &mut App, area: Rect) {
         cols[0],
     );
 
-    let audio_items = vec![ListItem::new("System audio"), ListItem::new("None")];
+    let audio_items: Vec<ListItem> = app
+        .audio_options
+        .iter()
+        .map(|c| ListItem::new(audio_label(c)))
+        .collect();
     draw_pane(
         f,
         " Audio ",

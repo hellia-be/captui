@@ -10,10 +10,15 @@ that TAB (or left/right) cycles between; up/down selects within the focused pane
 and Enter starts recording, at which point the panes are replaced by the recording
 view. This replaced the earlier source -> output -> input wizard.
 
-The Display pane lists each enabled display, then Region, All screens, and Audio
-only. The Audio pane is just System audio / None (no per-monitor entries). The
-Mic pane lists the mics plus None. So region, whole-desktop, and audio-only are
-choices in the Display pane rather than separate keys/screens.
+The Display pane lists each enabled display, then Region and Audio only. The
+Audio pane lists the outputs to capture — System audio (all) plus each sink's
+monitor, and None. The Mic pane lists the mics plus None. So region and
+audio-only are choices in the Display pane rather than separate keys/screens.
+
+(There is no "all screens" option: wf-recorder captures one output per instance,
+and a region spanning multiple outputs is rejected with "Failed to select
+output". Capturing every screen would need parallel recorders and one file per
+screen.)
 
 ## Sources (src/sources.rs)
 
@@ -25,11 +30,7 @@ geometry (Umbriel/Niri IPC); it does not follow the window if it moves.
 A region source comes from `slurp` (the Display pane's "Region"): on record it
 spawns slurp for an interactive drag-select and captures its `X,Y WxH` on stdout,
 validated by the pure `parse_geometry` (rejects malformed output and zero-area
-rectangles) into a `Source::Region`. "All screens" (`all_screens_region`, pure)
-instead computes one region covering every output's logical bounding box (position
-plus mode/scale, so it is correct on HiDPI and mixed-scale layouts); gaps between
-non-adjacent monitors fall inside the rectangle as black, which is inherent to a
-single-rectangle capture. Spawning slurp is IO in the app layer.
+rectangles) into a `Source::Region`. Spawning slurp is IO in the app layer.
 
 Displays are enumerated by parsing `wlr-randr`'s plain-text output
 (`parse_wlr_randr`): an output header sits at column 0 as `NAME "DESCRIPTION"`,
@@ -82,11 +83,10 @@ default source (`default.audio.source`) is marked "(default)" and sorted first,
 never collapsed into an opaque label that hides which physical device it is (that
 hid a user's real mic).
 
-The UI splits this into the two audio panes: the Audio pane is a plain System
-audio / None toggle where "System audio" targets the default sink's monitor (or
-`config.audio_output` if set) rather than listing every monitor; the Mic pane
-lists the mics (plus None), preselecting the configured or default mic. The
-individual per-monitor entries are intentionally not shown.
+The UI splits these across the two audio panes by `is_monitor`: the Audio pane
+lists the monitors (System audio (all) first, then each sink's monitor) plus None,
+preselecting `config.audio_output` if set; the Mic pane lists the mics plus None,
+preselecting the configured or default mic.
 
 `audio_target(output, input)` (pure) turns the two choices into one of: Silent
 (neither), Single (exactly one, recorded directly), or Mix (both). For Mix,
