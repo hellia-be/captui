@@ -13,6 +13,9 @@ Hand-written, newest first. Not tied to version numbers.
 
 ## Features
 
+- Live audio level meter: while recording with an audio source, a second
+  `pw-record` stream feeds a decaying peak meter shown as a bar on the recording
+  screen, so you can see sound is being captured. Completes P1.
 - Recording status panel: the recording screen now shows a live elapsed timer
   and the growing output file size; the timer freezes at the final duration when
   stopped.

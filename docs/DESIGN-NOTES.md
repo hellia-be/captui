@@ -87,7 +87,7 @@ audio node (omitting `--audio` when the user picked "No audio").
 The recording screen shows a live status panel: an elapsed timer and the growing
 output file size. The timer runs off an `Instant` captured at spawn and freezes
 at the value sampled on stop; the size is read from the file's metadata each
-draw (the loop redraws ~5x/s). Duration and byte formatting are pure helpers in
+draw (the loop redraws ~10x/s). Duration and byte formatting are pure helpers in
 src/format.rs, unit-tested in CI.
 
 Video quality is set explicitly instead of relying on wf-recorder's defaults,
@@ -107,11 +107,19 @@ tracks the child. Stopping sends SIGINT via the nix crate (never a hard kill, so
 wf-recorder finalizes the container) and waits for the child; quitting while
 recording stops first, so a capture is never left unfinalized.
 
-## Audio metering (planned)
+## Audio metering (src/meter.rs)
 
-The "is sound coming in" confirmation is a live level meter read from a PipeWire
-CLI stream (pw-mon / pw-dump); link libpipewire only if parsing proves too thin.
-It meters the audio source enumerated by src/audio.rs.
+The "is sound coming in" confirmation is a live level bar on the recording
+screen. While recording (and only when an audio source was chosen), a second
+`pw-record --raw --format=f32 --channels=1 --target=<node> -` streams headerless
+mono float samples to stdout; a background thread computes a decaying peak from
+each chunk and publishes it in an atomic. The draw loop reads that atomic and
+renders a bar. `--raw` matters: without it pw-cat wraps stdout in an `.au`
+container (big-endian), which would garble the little-endian float parse. The
+sample-to-peak and level-to-bar helpers are pure and unit-tested; the process and
+reader thread are IO in src/main.rs, torn down (child killed, thread joined) when
+the meter is dropped on stop or quit. Linking libpipewire stays a fallback only
+if the CLI stream proves too thin.
 
 ## Whisper handoff (planned)
 

@@ -7,8 +7,12 @@
 // version. See the LICENSE file for details.
 
 use std::io;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Arc;
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, bail, Context, Result};
@@ -25,6 +29,7 @@ use ratatui::widgets::{Block, Borders, HighlightSpacing, List, ListItem, ListSta
 
 use captui::audio::{parse_pw_dump, AudioSource};
 use captui::format::{format_duration, format_size};
+use captui::meter::{meter_bar, samples_peak};
 use captui::recorder::{extension, timestamped_name, wf_recorder_argv, Mode};
 use captui::sources::{
     layout_hints, parse_geometry, parse_wlr_randr, region, sort_reading_order, Output, Source,
@@ -95,12 +100,72 @@ fn stop_recorder(child: &mut Child) -> Result<()> {
     Ok(())
 }
 
+struct Meter {
+    child: Child,
+    level: Arc<AtomicU32>,
+    handle: Option<JoinHandle<()>>,
+}
+
+impl Meter {
+    fn level(&self) -> f32 {
+        f32::from_bits(self.level.load(Ordering::Relaxed))
+    }
+}
+
+impl Drop for Meter {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        if let Some(h) = self.handle.take() {
+            let _ = h.join();
+        }
+    }
+}
+
+fn spawn_meter(node: &str) -> Option<Meter> {
+    let mut child = Command::new("pw-record")
+        .args([
+            "--raw",
+            "--format=f32",
+            "--rate=48000",
+            "--channels=1",
+            &format!("--target={node}"),
+            "-",
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    let mut stdout = child.stdout.take()?;
+    let level = Arc::new(AtomicU32::new(0));
+    let shared = level.clone();
+    let handle = std::thread::spawn(move || {
+        let mut buf = [0u8; 4096];
+        let mut display = 0.0f32;
+        while let Ok(n) = stdout.read(&mut buf) {
+            if n == 0 {
+                break;
+            }
+            display *= 0.8;
+            display = display.max(samples_peak(&buf[..n]));
+            shared.store(display.to_bits(), Ordering::Relaxed);
+        }
+    });
+    Some(Meter {
+        child,
+        level,
+        handle: Some(handle),
+    })
+}
+
 struct Rec {
     child: Child,
     path: PathBuf,
     stopped: bool,
     started: Instant,
     final_elapsed: Option<Duration>,
+    meter: Option<Meter>,
 }
 
 impl Rec {
@@ -230,12 +295,14 @@ impl App {
         };
         match spawn_recorder(&source, audio.as_deref(), &path) {
             Ok(child) => {
+                let meter = audio.as_deref().and_then(spawn_meter);
                 self.recording = Some(Rec {
                     child,
                     path,
                     stopped: false,
                     started: Instant::now(),
                     final_elapsed: None,
+                    meter,
                 });
                 self.status = None;
                 self.screen = Screen::Recording;
@@ -255,6 +322,7 @@ impl App {
             return;
         }
         rec.final_elapsed = Some(rec.started.elapsed());
+        rec.meter = None;
         let msg = match stop_recorder(&mut rec.child) {
             Ok(()) => {
                 rec.stopped = true;
@@ -298,7 +366,7 @@ fn run(
     loop {
         terminal.draw(|f| draw(f, &mut app, error.as_deref()))?;
 
-        if !event::poll(Duration::from_millis(200))? {
+        if !event::poll(Duration::from_millis(100))? {
             continue;
         }
         let Event::Key(k) = event::read()? else {
@@ -464,11 +532,15 @@ fn draw_recording(f: &mut Frame, app: &App, area: Rect) {
             } else {
                 Line::from(vec!["● REC  ".red().bold(), timer.into()])
             };
-            Text::from(vec![
-                head,
-                Line::from(format!("size: {size}")),
-                Line::from(format!("file: {}", rec.path.display())),
-            ])
+            let mut lines = vec![head, Line::from(format!("size: {size}"))];
+            if let Some(meter) = &rec.meter {
+                lines.push(Line::from(format!(
+                    "audio: {}",
+                    meter_bar(meter.level(), 24)
+                )));
+            }
+            lines.push(Line::from(format!("file: {}", rec.path.display())));
+            Text::from(lines)
         }
         None => Text::from("not recording"),
     };
