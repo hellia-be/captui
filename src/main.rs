@@ -27,7 +27,9 @@ use nix::unistd::Pid;
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, HighlightSpacing, List, ListItem, ListState, Paragraph};
 
-use captui::audio::{audio_target, parse_pw_dump, AudioSource, AudioTarget};
+use captui::audio::{
+    audio_target, parse_pw_dump, parse_sink_input_index, AudioSource, AudioTarget,
+};
 use captui::format::{format_duration, format_size};
 use captui::meter::{meter_bar, samples_peak};
 use captui::recorder::{extension, timestamped_name, wf_recorder_argv, Mode};
@@ -146,7 +148,25 @@ fn pactl_load(args: &[&str]) -> Result<String> {
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
-fn setup_mix(output: &str, input: &str) -> Result<(String, AudioMix)> {
+struct MixSetup {
+    monitor: String,
+    mix: AudioMix,
+    out_sink_input: Option<u32>,
+    in_sink_input: Option<u32>,
+}
+
+fn load_loopback(source: &str, mix: &mut AudioMix) -> Result<String> {
+    let id = pactl_load(&[
+        "module-loopback",
+        &format!("source={source}"),
+        &format!("sink={MIX_SINK}"),
+        "latency_msec=20",
+    ])?;
+    mix.modules.push(id.clone());
+    Ok(id)
+}
+
+fn setup_mix(output: &str, input: &str) -> Result<MixSetup> {
     let sink = pactl_load(&[
         "module-null-sink",
         &format!("sink_name={MIX_SINK}"),
@@ -155,16 +175,40 @@ fn setup_mix(output: &str, input: &str) -> Result<(String, AudioMix)> {
     let mut mix = AudioMix {
         modules: vec![sink],
     };
-    for source in [output, input] {
-        let lb = pactl_load(&[
-            "module-loopback",
-            &format!("source={source}"),
-            &format!("sink={MIX_SINK}"),
-            "latency_msec=20",
-        ])?;
-        mix.modules.push(lb);
-    }
-    Ok((format!("{MIX_SINK}.monitor"), mix))
+    let out_module = load_loopback(output, &mut mix)?;
+    let in_module = load_loopback(input, &mut mix)?;
+
+    let sink_inputs = Command::new("pactl")
+        .args(["list", "sink-inputs"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned());
+    let idx = |module: &str| {
+        sink_inputs
+            .as_deref()
+            .and_then(|t| parse_sink_input_index(t, module))
+    };
+
+    Ok(MixSetup {
+        monitor: format!("{MIX_SINK}.monitor"),
+        out_sink_input: idx(&out_module),
+        in_sink_input: idx(&in_module),
+        mix,
+    })
+}
+
+fn set_sink_input_volume(idx: u32, pct: u16) {
+    let _ = Command::new("pactl")
+        .args([
+            "set-sink-input-volume",
+            &idx.to_string(),
+            &format!("{pct}%"),
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
 }
 
 struct Meter {
@@ -190,14 +234,14 @@ impl Drop for Meter {
 }
 
 fn spawn_meter(node: &str) -> Option<Meter> {
-    let mut child = Command::new("pw-record")
+    let mut child = Command::new("parec")
         .args([
-            "--raw",
-            "--format=f32",
+            "--device",
+            node,
+            "--format=float32le",
             "--rate=48000",
             "--channels=1",
-            &format!("--target={node}"),
-            "-",
+            "--latency-msec=30",
         ])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -226,13 +270,21 @@ fn spawn_meter(node: &str) -> Option<Meter> {
     })
 }
 
+struct SourceControl {
+    label: &'static str,
+    meter: Meter,
+    sink_input: Option<u32>,
+    volume: u16,
+}
+
 struct Rec {
     child: Child,
     path: PathBuf,
     stopped: bool,
     started: Instant,
     final_elapsed: Option<Duration>,
-    meters: Vec<(&'static str, Meter)>,
+    sources: Vec<SourceControl>,
+    focus: usize,
     mix: Option<AudioMix>,
 }
 
@@ -401,11 +453,16 @@ impl App {
             return;
         }
 
-        let (audio_node, mix) = match target {
-            AudioTarget::Silent => (None, None),
-            AudioTarget::Single(node) => (Some(node), None),
+        let (audio_node, mix, out_input, in_input) = match target {
+            AudioTarget::Silent => (None, None, None, None),
+            AudioTarget::Single(node) => (Some(node), None, None, None),
             AudioTarget::Mix { output, input } => match setup_mix(&output, &input) {
-                Ok((monitor, mix)) => (Some(monitor), Some(mix)),
+                Ok(s) => (
+                    Some(s.monitor),
+                    Some(s.mix),
+                    s.out_sink_input,
+                    s.in_sink_input,
+                ),
                 Err(e) => {
                     self.status = Some(format!("{e:#}"));
                     return;
@@ -440,12 +497,22 @@ impl App {
 
         match spawned {
             Ok(child) => {
-                let mut meters = Vec::new();
-                if let Some(node) = output.as_deref().and_then(spawn_meter) {
-                    meters.push(("output", node));
+                let mut sources = Vec::new();
+                if let Some(meter) = output.as_deref().and_then(spawn_meter) {
+                    sources.push(SourceControl {
+                        label: "output",
+                        meter,
+                        sink_input: out_input,
+                        volume: 100,
+                    });
                 }
-                if let Some(node) = input.as_deref().and_then(spawn_meter) {
-                    meters.push(("input", node));
+                if let Some(meter) = input.as_deref().and_then(spawn_meter) {
+                    sources.push(SourceControl {
+                        label: "input",
+                        meter,
+                        sink_input: in_input,
+                        volume: 100,
+                    });
                 }
                 self.pending_source = None;
                 self.recording = Some(Rec {
@@ -454,7 +521,8 @@ impl App {
                     stopped: false,
                     started: Instant::now(),
                     final_elapsed: None,
-                    meters,
+                    sources,
+                    focus: 0,
                     mix,
                 });
                 self.status = None;
@@ -462,6 +530,26 @@ impl App {
             }
             Err(e) => {
                 self.status = Some(format!("{e:#}"));
+            }
+        }
+    }
+
+    fn focus_source(&mut self, delta: isize) {
+        if let Some(rec) = self.recording.as_mut() {
+            if !rec.sources.is_empty() {
+                let len = rec.sources.len() as isize;
+                rec.focus = (rec.focus as isize + delta).rem_euclid(len) as usize;
+            }
+        }
+    }
+
+    fn adjust_volume(&mut self, delta: i16) {
+        if let Some(rec) = self.recording.as_mut() {
+            if let Some(src) = rec.sources.get_mut(rec.focus) {
+                if let Some(idx) = src.sink_input {
+                    src.volume = (src.volume as i16 + delta).clamp(0, 150) as u16;
+                    set_sink_input_volume(idx, src.volume);
+                }
             }
         }
     }
@@ -474,7 +562,7 @@ impl App {
             return;
         }
         rec.final_elapsed = Some(rec.started.elapsed());
-        rec.meters.clear();
+        rec.sources.clear();
         let msg = match stop_recorder(&mut rec.child) {
             Ok(()) => {
                 rec.stopped = true;
@@ -519,7 +607,7 @@ fn run(
     loop {
         terminal.draw(|f| draw(f, &mut app, error.as_deref()))?;
 
-        if !event::poll(Duration::from_millis(100))? {
+        if !event::poll(Duration::from_millis(50))? {
             continue;
         }
         let Event::Key(k) = event::read()? else {
@@ -560,6 +648,10 @@ fn run(
             },
             Screen::Recording => match k.code {
                 KeyCode::Char('s') => app.stop(),
+                KeyCode::Up | KeyCode::Char('k') => app.focus_source(-1),
+                KeyCode::Down | KeyCode::Char('j') => app.focus_source(1),
+                KeyCode::Left | KeyCode::Char('h') => app.adjust_volume(-5),
+                KeyCode::Right | KeyCode::Char('l') => app.adjust_volume(5),
                 KeyCode::Char('q') | KeyCode::Esc => {
                     app.stop();
                     return Ok(app);
@@ -712,10 +804,21 @@ fn draw_recording(f: &mut Frame, app: &App, area: Rect) {
                 Line::from(vec![format!("● REC{tag}  ").red().bold(), timer.into()])
             };
             let mut lines = vec![head, Line::from(format!("size: {size}"))];
-            for (label, meter) in &rec.meters {
+            let adjustable = !rec.stopped && rec.sources.iter().any(|s| s.sink_input.is_some());
+            for (i, src) in rec.sources.iter().enumerate() {
+                let marker = if adjustable && i == rec.focus {
+                    ">"
+                } else {
+                    " "
+                };
+                let vol = match src.sink_input {
+                    Some(_) if !rec.stopped => format!("  {:>3}%", src.volume),
+                    _ => String::new(),
+                };
                 lines.push(Line::from(format!(
-                    "{label:>6}: {}",
-                    meter_bar(meter.level(), 24)
+                    "{marker} {:>6}: {}{vol}",
+                    src.label,
+                    meter_bar(src.meter.level(), 24)
                 )));
             }
             lines.push(Line::from(format!("file: {}", rec.path.display())));
@@ -728,6 +831,7 @@ fn draw_recording(f: &mut Frame, app: &App, area: Rect) {
 
 fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
     let stopped = matches!(&app.recording, Some(r) if r.stopped);
+    let adjustable = matches!(&app.recording, Some(r) if !r.stopped && r.sources.iter().any(|s| s.sink_input.is_some()));
     let hint = match app.screen {
         Screen::Source => {
             " up/down move  i identify  enter display  r region  a audio-only  q quit "
@@ -735,6 +839,9 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
         Screen::AudioOutput => " up/down move  enter next (input)  esc back  q quit ",
         Screen::AudioInput => " up/down move  enter record  esc back  q quit ",
         Screen::Recording if stopped => " q quit ",
+        Screen::Recording if adjustable => {
+            " s stop  up/down focus  left/right volume  q stop and quit "
+        }
         Screen::Recording => " s stop  q stop and quit ",
     };
     let footer = match &app.status {

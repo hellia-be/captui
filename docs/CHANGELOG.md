@@ -13,6 +13,9 @@ Hand-written, newest first. Not tied to version numbers.
 
 ## Features
 
+- Per-source mix volume: when mixing output + input, the recording screen lets
+  you focus a source (up/down) and adjust its level (left/right) with a live
+  percentage, applied to that loopback's stream only, never system volume.
 - Separate output and input level meters: the recording screen shows one bar per
   chosen source (metering the raw sink monitor and mic directly), so you can see
   system audio and your mic independently even when they are mixed.
@@ -39,6 +42,11 @@ Hand-written, newest first. Not tied to version numbers.
 
 ## Fixes
 
+- Output and input meters showed the same level: the meter used
+  `pw-record --target`, which wants a PipeWire node and cannot resolve a pulse
+  `<sink>.monitor`, so it fell back to the default source (the mic) and both bars
+  tracked the mic. Meter with `parec --device` (same pulse names as the recorder)
+  instead, so each bar tracks its own source.
 - Better video quality: encode with libx264 at `crf=18`, `preset=fast` instead
   of wf-recorder's soft defaults, so screen text and detail are sharp. (Hardware
   VAAPI encoding remains the separate wl-screenrec backend on the roadmap.)
