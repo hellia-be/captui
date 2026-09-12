@@ -13,6 +13,8 @@ Hand-written, newest first. Not tied to version numbers.
 
 ## Features
 
+- New recording without restarting: after stopping, press `n` on the recording
+  screen to return to the source picker and record again.
 - Whisper handoff: with `transcribe_command` set in the config, the stopped
   recording screen offers `t` to run it on the recording (a `{}` in the command
   is replaced by the file path, else it is appended). It runs after the TUI exits
