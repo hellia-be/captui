@@ -21,7 +21,7 @@ use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
-use directories::UserDirs;
+use directories::{ProjectDirs, UserDirs};
 use nix::sys::signal::{self, Signal};
 use nix::unistd::Pid;
 use ratatui::prelude::*;
@@ -30,6 +30,7 @@ use ratatui::widgets::{Block, Borders, HighlightSpacing, List, ListItem, ListSta
 use captui::audio::{
     audio_target, parse_pw_dump, parse_sink_input_index, AudioSource, AudioTarget,
 };
+use captui::config::{parse_config, Config};
 use captui::format::{format_duration, format_size};
 use captui::meter::{meter_bar, samples_peak};
 use captui::recorder::{extension, timestamped_name, wf_recorder_argv, Mode};
@@ -69,18 +70,45 @@ fn enumerate_audio() -> Result<Vec<AudioSource>> {
     Ok(parse_pw_dump(&String::from_utf8_lossy(&out.stdout)))
 }
 
-fn output_path(mode: Mode) -> Result<PathBuf> {
-    let base = UserDirs::new()
-        .and_then(|u| u.video_dir().map(Path::to_path_buf))
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Videos")))
-        .ok_or_else(|| anyhow!("could not determine a video directory"))?;
-    let dir = base.join("captures");
+fn load_config() -> Config {
+    ProjectDirs::from("", "", "captui")
+        .and_then(|d| std::fs::read_to_string(d.config_dir().join("config.toml")).ok())
+        .map(|text| parse_config(&text))
+        .unwrap_or_default()
+}
+
+fn expand_tilde(path: &str) -> PathBuf {
+    match path.strip_prefix("~/") {
+        Some(rest) => match std::env::var_os("HOME") {
+            Some(home) => PathBuf::from(home).join(rest),
+            None => PathBuf::from(path),
+        },
+        None => PathBuf::from(path),
+    }
+}
+
+fn output_path(cfg: &Config, mode: Mode) -> Result<PathBuf> {
+    let dir = match &cfg.output_dir {
+        Some(d) => expand_tilde(d),
+        None => UserDirs::new()
+            .and_then(|u| u.video_dir().map(Path::to_path_buf))
+            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Videos")))
+            .ok_or_else(|| anyhow!("could not determine a video directory"))?
+            .join("captures"),
+    };
     std::fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
+    let ext = match mode {
+        Mode::AudioVideo => cfg
+            .container
+            .clone()
+            .unwrap_or_else(|| extension(Mode::AudioVideo).to_string()),
+        Mode::AudioOnly => extension(Mode::AudioOnly).to_string(),
+    };
     let secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or_default();
-    Ok(dir.join(timestamped_name(secs, extension(mode))))
+    Ok(dir.join(timestamped_name(secs, &ext)))
 }
 
 fn spawn_audio_recorder(node: &str, out: &Path) -> Result<Child> {
@@ -318,10 +346,11 @@ struct App {
     screen: Screen,
     recording: Option<Rec>,
     status: Option<String>,
+    config: Config,
 }
 
 impl App {
-    fn new(displays: Vec<Output>) -> Self {
+    fn new(displays: Vec<Output>, config: Config) -> Self {
         let mut source_list = ListState::default();
         if !displays.is_empty() {
             source_list.select(Some(0));
@@ -339,6 +368,7 @@ impl App {
             screen: Screen::Source,
             recording: None,
             status: None,
+            config,
         }
     }
 
@@ -407,15 +437,23 @@ impl App {
             .map(Some)
             .chain(std::iter::once(None))
             .collect();
-        // Default to system audio, and to the default mic if there is one.
-        self.output_list.select(Some(0));
+        // Preselect the configured sources; else system audio, and the default mic.
+        let match_node = |opts: &[Option<AudioSource>], want: Option<&str>| {
+            want.and_then(|w| {
+                opts.iter()
+                    .position(|o| o.as_ref().is_some_and(|a| a.node_name == w))
+            })
+        };
+        let out_sel = match_node(&self.output_options, self.config.audio_output.as_deref());
+        self.output_list.select(Some(out_sel.unwrap_or(0)));
         let default_mic = self.input_options.iter().position(|o| {
             o.as_ref()
                 .is_some_and(|a| a.description.ends_with("(default)"))
         });
-        self.input_list.select(Some(
-            default_mic.unwrap_or(self.input_options.len().saturating_sub(1)),
-        ));
+        let in_sel = match_node(&self.input_options, self.config.audio_input.as_deref())
+            .or(default_mic)
+            .unwrap_or(self.input_options.len().saturating_sub(1));
+        self.input_list.select(Some(in_sel));
         self.screen = Screen::AudioOutput;
     }
 
@@ -475,7 +513,7 @@ impl App {
         } else {
             Mode::AudioVideo
         };
-        let path = match output_path(mode) {
+        let path = match output_path(&self.config, mode) {
             Ok(p) => p,
             Err(e) => {
                 self.status = Some(format!("{e:#}"));
@@ -577,13 +615,14 @@ impl App {
 
 fn main() -> Result<()> {
     let displays = enumerate_displays();
+    let config = load_config();
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout))?;
 
-    let res = run(&mut terminal, displays);
+    let res = run(&mut terminal, displays, config);
 
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
@@ -598,10 +637,11 @@ fn main() -> Result<()> {
 fn run(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     displays: Result<Vec<Output>>,
+    config: Config,
 ) -> Result<App> {
     let (mut app, error) = match displays {
-        Ok(d) => (App::new(d), None),
-        Err(e) => (App::new(Vec::new()), Some(format!("{e:#}"))),
+        Ok(d) => (App::new(d, config), None),
+        Err(e) => (App::new(Vec::new(), config), Some(format!("{e:#}"))),
     };
 
     loop {

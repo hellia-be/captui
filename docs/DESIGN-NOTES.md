@@ -166,6 +166,17 @@ reader thread are IO in src/main.rs, torn down (child killed, thread joined) whe
 the meter is dropped on stop or quit. Linking libpipewire stays a fallback only
 if the CLI stream proves too thin.
 
+## Config (src/config.rs)
+
+`~/.config/captui/config.toml` (via the directories crate) holds host-specific
+defaults, all optional: `output_dir` (where captures are written; `~/` is
+expanded; when unset, the XDG videos dir's `captures/`), `container` (the A/V
+file extension, default `mkv`; audio-only stays `flac`), and `audio_output` /
+`audio_input` (a node name to preselect in the pickers). Parsing is the pure
+`parse_config` (serde + toml); any read or parse failure falls back to defaults,
+so a missing or malformed file never blocks startup. Loading the file is IO in
+the app layer. Runtime state stays in config, not the repo.
+
 ## Whisper handoff (planned)
 
 After stop, captui offers to run the recording through a Whisper transcription
