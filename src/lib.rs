@@ -2,5 +2,6 @@
 
 pub mod audio;
 pub mod font;
+pub mod format;
 pub mod recorder;
 pub mod sources;
