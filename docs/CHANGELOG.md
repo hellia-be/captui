@@ -13,6 +13,10 @@ Hand-written, newest first. Not tied to version numbers.
 
 ## Features
 
+- Pause/resume: press `p` while recording to pause and again to resume (the
+  timer excludes paused time). Best-effort — wf-recorder has no native pause, so
+  captui freezes the encoder with SIGSTOP/SIGCONT; the file may show a frozen
+  segment or slight A/V drift across a pause, so verify per use.
 - New recording without restarting: after stopping, press `n` on the recording
   screen to return to the source picker and record again.
 - Whisper handoff: with `transcribe_command` set in the config, the stopped

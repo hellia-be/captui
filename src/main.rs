@@ -133,8 +133,12 @@ fn spawn_recorder(source: &Source, audio: Option<&str>, out: &Path) -> Result<Ch
         .with_context(|| format!("could not spawn {} (is it installed?)", argv[0]))
 }
 
+fn signal_child(child: &Child, sig: Signal) {
+    let _ = signal::kill(Pid::from_raw(child.id() as i32), sig);
+}
+
 fn stop_recorder(child: &mut Child) -> Result<()> {
-    let _ = signal::kill(Pid::from_raw(child.id() as i32), Signal::SIGINT);
+    signal_child(child, Signal::SIGINT);
     child
         .wait()
         .context("waiting for wf-recorder to finalize")?;
@@ -311,6 +315,9 @@ struct Rec {
     stopped: bool,
     started: Instant,
     final_elapsed: Option<Duration>,
+    paused: bool,
+    pause_started: Option<Instant>,
+    paused_total: Duration,
     sources: Vec<SourceControl>,
     focus: usize,
     mix: Option<AudioMix>,
@@ -318,7 +325,14 @@ struct Rec {
 
 impl Rec {
     fn elapsed(&self) -> Duration {
-        self.final_elapsed.unwrap_or_else(|| self.started.elapsed())
+        if let Some(final_elapsed) = self.final_elapsed {
+            return final_elapsed;
+        }
+        let mut paused = self.paused_total;
+        if let Some(since) = self.pause_started {
+            paused += since.elapsed();
+        }
+        self.started.elapsed().saturating_sub(paused)
     }
 
     fn size_bytes(&self) -> u64 {
@@ -579,6 +593,9 @@ impl App {
                     stopped: false,
                     started: Instant::now(),
                     final_elapsed: None,
+                    paused: false,
+                    pause_started: None,
+                    paused_total: Duration::ZERO,
                     sources,
                     focus: 0,
                     mix,
@@ -612,6 +629,26 @@ impl App {
         }
     }
 
+    fn toggle_pause(&mut self) {
+        let Some(rec) = self.recording.as_mut() else {
+            return;
+        };
+        if rec.stopped {
+            return;
+        }
+        if rec.paused {
+            if let Some(since) = rec.pause_started.take() {
+                rec.paused_total += since.elapsed();
+            }
+            rec.paused = false;
+            signal_child(&rec.child, Signal::SIGCONT);
+        } else {
+            rec.paused = true;
+            rec.pause_started = Some(Instant::now());
+            signal_child(&rec.child, Signal::SIGSTOP);
+        }
+    }
+
     fn stop(&mut self) {
         let Some(rec) = self.recording.as_mut() else {
             return;
@@ -619,7 +656,14 @@ impl App {
         if rec.stopped {
             return;
         }
-        rec.final_elapsed = Some(rec.started.elapsed());
+        if rec.paused {
+            if let Some(since) = rec.pause_started.take() {
+                rec.paused_total += since.elapsed();
+            }
+            rec.paused = false;
+            signal_child(&rec.child, Signal::SIGCONT);
+        }
+        rec.final_elapsed = Some(rec.elapsed());
         rec.sources.clear();
         let msg = match stop_recorder(&mut rec.child) {
             Ok(()) => {
@@ -727,6 +771,7 @@ fn run(
             },
             Screen::Recording => match k.code {
                 KeyCode::Char('s') => app.stop(),
+                KeyCode::Char('p') => app.toggle_pause(),
                 KeyCode::Up | KeyCode::Char('k') => app.focus_source(-1),
                 KeyCode::Down | KeyCode::Char('j') => app.focus_source(1),
                 KeyCode::Left | KeyCode::Char('h') => app.adjust_volume(-5),
@@ -889,6 +934,11 @@ fn draw_recording(f: &mut Frame, app: &App, area: Rect) {
             let tag = if app.audio_only { " (audio)" } else { "" };
             let head = if rec.stopped {
                 Line::from(vec![format!("■ stopped{tag}  ").green(), timer.into()])
+            } else if rec.paused {
+                Line::from(vec![
+                    format!("❚❚ PAUSED{tag}  ").yellow().bold(),
+                    timer.into(),
+                ])
             } else {
                 Line::from(vec![format!("● REC{tag}  ").red().bold(), timer.into()])
             };
@@ -923,7 +973,8 @@ fn draw_recording(f: &mut Frame, app: &App, area: Rect) {
 
 fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
     let stopped = matches!(&app.recording, Some(r) if r.stopped);
-    let adjustable = matches!(&app.recording, Some(r) if !r.stopped && r.sources.iter().any(|s| s.sink_input.is_some()));
+    let paused = matches!(&app.recording, Some(r) if r.paused);
+    let adjustable = matches!(&app.recording, Some(r) if !r.stopped && !r.paused && r.sources.iter().any(|s| s.sink_input.is_some()));
     let hint = match app.screen {
         Screen::Source => {
             " up/down move  i identify  enter display  r region  a audio-only  q quit "
@@ -937,10 +988,11 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
                 " n new recording  q quit "
             }
         }
+        Screen::Recording if paused => " p resume  s stop  q stop and quit ",
         Screen::Recording if adjustable => {
-            " s stop  up/down focus  left/right volume  q stop and quit "
+            " s stop  p pause  up/down focus  left/right volume  q stop and quit "
         }
-        Screen::Recording => " s stop  q stop and quit ",
+        Screen::Recording => " s stop  p pause  q stop and quit ",
     };
     let footer = match &app.status {
         Some(s) => Paragraph::new(format!(" {s} ")).style(Style::new().yellow()),

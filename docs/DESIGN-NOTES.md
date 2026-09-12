@@ -141,6 +141,15 @@ tracks the child. Stopping sends SIGINT via the nix crate (never a hard kill, so
 wf-recorder finalizes the container) and waits for the child; quitting while
 recording stops first, so a capture is never left unfinalized.
 
+Pause (`p`) is best-effort: wf-recorder has no native pause, so captui SIGSTOPs
+the recorder child to freeze it and SIGCONTs to resume (pw-record for audio-only
+likewise). The displayed timer subtracts paused time (tracked as an accumulated
+`paused_total`). Because this freezes the encoder rather than editing the
+timeline, the resulting file may show a frozen segment or slight A/V drift across
+a pause; it is offered as a convenience to verify per use, not a guaranteed clean
+cut. Stopping while paused resumes the child first so SIGINT is delivered and the
+file finalizes.
+
 ## Audio metering (src/meter.rs)
 
 The "is sound coming in" confirmation is a live level bar per chosen source on
