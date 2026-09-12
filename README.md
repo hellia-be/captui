@@ -42,10 +42,13 @@ Optional `~/.config/captui/config.toml`, all keys optional:
     container = "mkv"                   # A/V file extension (audio-only is flac)
     audio_output = "alsa_output.pci-0000_01_00.1.hdmi-stereo.monitor"
     audio_input = "alsa_input.usb-Razer_..."
+    transcribe_command = "transcribe-remote {}"   # {} = recording path
 
 `audio_output` / `audio_input` are PipeWire node names (as shown by
-`pactl list short sources`) to preselect in the pickers. A missing or malformed
-file falls back to built-in defaults.
+`pactl list short sources`) to preselect in the pickers. `transcribe_command`, if
+set, adds a `t` action on the stopped recording screen that runs the command on
+the file (`{}` is the path, else it is appended). A missing or malformed file
+falls back to built-in defaults.
 
 ## Getting started
 

@@ -177,11 +177,16 @@ file extension, default `mkv`; audio-only stays `flac`), and `audio_output` /
 so a missing or malformed file never blocks startup. Loading the file is IO in
 the app layer. Runtime state stays in config, not the repo.
 
-## Whisper handoff (planned)
+## Whisper handoff (src/main.rs, recorder.rs)
 
-After stop, captui offers to run the recording through a Whisper transcription
-step. On the author's setup that is transcribe-remote (rsync to a GPU host, run
-whisper, bring back the text); the handoff is just a configured command.
+After stop, if `transcribe_command` is set in the config, the stopped recording
+screen offers `t` to transcribe. On the author's setup that command is
+transcribe-remote (rsync to a GPU host, run whisper, bring back the text); the
+handoff is just a configured command. `transcribe_argv` (pure) turns the template
+into an argv: whitespace-split, with a `{}` token replaced by the recording path,
+or the path appended when there is no `{}`. It is intentionally not run through a
+shell (no injection, predictable). The command runs after the TUI exits, in the
+foreground with inherited stdio, so the user sees rsync/whisper progress.
 
 ## CI pipeline (.github/workflows/ci.yml)
 

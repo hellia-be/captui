@@ -13,6 +13,10 @@ Hand-written, newest first. Not tied to version numbers.
 
 ## Features
 
+- Whisper handoff: with `transcribe_command` set in the config, the stopped
+  recording screen offers `t` to run it on the recording (a `{}` in the command
+  is replaced by the file path, else it is appended). It runs after the TUI exits
+  with inherited output, so you see transcription progress.
 - Config file: `~/.config/captui/config.toml` sets optional defaults — output
   directory (with `~` expansion), A/V container extension, and a preselected
   audio output/input by node name. Missing or malformed config falls back to
