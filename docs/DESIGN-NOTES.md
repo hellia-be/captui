@@ -124,6 +124,17 @@ at the value sampled on stop; the size is read from the file's metadata each
 draw (the loop redraws ~20x/s). Duration and byte formatting are pure helpers in
 src/format.rs, unit-tested in CI.
 
+The A/V recorder is selectable via `backend` in the config: `wf-recorder`
+(default, software libx264) or `wl-screenrec` (hardware VAAPI encode by default,
+better quality-per-bitrate and lower CPU where the GPU supports it). `Backend`
+(pure) dispatches to the matching argv builder. Both take the same `-o`/`-g`
+source and `-f` output; they differ on audio — wf-recorder wants the attached
+`--audio=<node>`, wl-screenrec wants `--audio --audio-device <node>`. Audio-only
+mode always uses pw-record regardless of backend. Neither recorder supports
+pausing (SIGSTOP desyncs audio because the audio server buffers through the
+freeze; wl-screenrec has no pause either), so captui does not offer pause; a
+clean pause would require recording in segments and concatenating.
+
 Video quality is set explicitly instead of relying on wf-recorder's defaults,
 which look soft (especially screen text): software libx264 at `crf=18` (visually
 near-lossless, sharper than the ~23 default) with `preset=fast` to stay

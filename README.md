@@ -43,6 +43,7 @@ Optional `~/.config/captui/config.toml`, all keys optional:
     audio_output = "alsa_output.pci-0000_01_00.1.hdmi-stereo.monitor"
     audio_input = "alsa_input.usb-Razer_..."
     transcribe_command = "transcribe-remote {}"   # {} = recording path
+    backend = "wf-recorder"             # or "wl-screenrec" for hardware (VAAPI) encode
 
 `audio_output` / `audio_input` are PipeWire node names (as shown by
 `pactl list short sources`) to preselect in the pickers. `transcribe_command`, if
