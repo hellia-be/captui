@@ -621,15 +621,14 @@ impl App {
         }
         rec.final_elapsed = Some(rec.started.elapsed());
         rec.sources.clear();
-        let msg = match stop_recorder(&mut rec.child) {
+        self.status = match stop_recorder(&mut rec.child) {
             Ok(()) => {
                 rec.stopped = true;
-                format!("saved: {}", rec.path.display())
+                None
             }
-            Err(e) => format!("stop failed: {e:#}"),
+            Err(e) => Some(format!("stop failed: {e:#}")),
         };
         rec.mix = None;
-        self.status = Some(msg);
     }
 }
 
@@ -910,7 +909,8 @@ fn draw_recording(f: &mut Frame, app: &App, area: Rect) {
                     meter_bar(src.meter.level(), 24)
                 )));
             }
-            lines.push(Line::from(format!("file: {}", rec.path.display())));
+            let file_label = if rec.stopped { "saved" } else { "file" };
+            lines.push(Line::from(format!("{file_label}: {}", rec.path.display())));
             if rec.stopped && app.config.transcribe_command.is_some() {
                 lines.push(Line::from("press t to transcribe".cyan()));
             }
