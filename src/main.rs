@@ -27,7 +27,7 @@ use nix::unistd::Pid;
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, HighlightSpacing, List, ListItem, ListState, Paragraph};
 
-use captui::audio::{parse_pw_dump, AudioSource};
+use captui::audio::{audio_target, parse_pw_dump, AudioSource, AudioTarget};
 use captui::format::{format_duration, format_size};
 use captui::meter::{meter_bar, samples_peak};
 use captui::recorder::{extension, timestamped_name, wf_recorder_argv, Mode};
@@ -100,6 +100,62 @@ fn stop_recorder(child: &mut Child) -> Result<()> {
     Ok(())
 }
 
+const MIX_SINK: &str = "captui_mix";
+
+struct AudioMix {
+    modules: Vec<String>,
+}
+
+impl Drop for AudioMix {
+    fn drop(&mut self) {
+        for id in self.modules.iter().rev() {
+            let _ = Command::new("pactl")
+                .args(["unload-module", id])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+        }
+    }
+}
+
+fn pactl_load(args: &[&str]) -> Result<String> {
+    let out = Command::new("pactl")
+        .arg("load-module")
+        .args(args)
+        .output()
+        .context("could not run pactl (is it installed?)")?;
+    if !out.status.success() {
+        bail!(
+            "pactl load-module {}: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+fn setup_mix(output: &str, input: &str) -> Result<(String, AudioMix)> {
+    let sink = pactl_load(&[
+        "module-null-sink",
+        &format!("sink_name={MIX_SINK}"),
+        "sink_properties=device.description=captui-mix",
+    ])?;
+    let mut mix = AudioMix {
+        modules: vec![sink],
+    };
+    for source in [output, input] {
+        let lb = pactl_load(&[
+            "module-loopback",
+            &format!("source={source}"),
+            &format!("sink={MIX_SINK}"),
+            "latency_msec=20",
+        ])?;
+        mix.modules.push(lb);
+    }
+    Ok((format!("{MIX_SINK}.monitor"), mix))
+}
+
 struct Meter {
     child: Child,
     level: Arc<AtomicU32>,
@@ -166,6 +222,7 @@ struct Rec {
     started: Instant,
     final_elapsed: Option<Duration>,
     meter: Option<Meter>,
+    mix: Option<AudioMix>,
 }
 
 impl Rec {
@@ -180,7 +237,8 @@ impl Rec {
 
 enum Screen {
     Source,
-    Audio,
+    AudioOutput,
+    AudioInput,
     Recording,
 }
 
@@ -188,8 +246,11 @@ struct App {
     displays: Vec<Output>,
     source_list: ListState,
     pending_source: Option<Source>,
-    audio_options: Vec<Option<AudioSource>>,
-    audio_list: ListState,
+    output_options: Vec<Option<AudioSource>>,
+    output_list: ListState,
+    input_options: Vec<Option<AudioSource>>,
+    input_list: ListState,
+    chosen_output: Option<String>,
     screen: Screen,
     recording: Option<Rec>,
     status: Option<String>,
@@ -205,8 +266,11 @@ impl App {
             displays,
             source_list,
             pending_source: None,
-            audio_options: Vec::new(),
-            audio_list: ListState::default(),
+            output_options: Vec::new(),
+            output_list: ListState::default(),
+            input_options: Vec::new(),
+            input_list: ListState::default(),
+            chosen_output: None,
             screen: Screen::Source,
             recording: None,
             status: None,
@@ -215,7 +279,8 @@ impl App {
 
     fn active_list(&mut self) -> (&mut ListState, usize) {
         match self.screen {
-            Screen::Audio => (&mut self.audio_list, self.audio_options.len()),
+            Screen::AudioOutput => (&mut self.output_list, self.output_options.len()),
+            Screen::AudioInput => (&mut self.input_list, self.input_options.len()),
             _ => (&mut self.source_list, self.displays.len()),
         }
     }
@@ -240,16 +305,16 @@ impl App {
             .and_then(|i| self.displays.get(i))
         {
             self.pending_source = Some(Source::Display(o.name.clone()));
-            self.enter_audio();
+            self.enter_output();
         }
     }
 
     fn choose_region(&mut self, src: Source) {
         self.pending_source = Some(src);
-        self.enter_audio();
+        self.enter_output();
     }
 
-    fn enter_audio(&mut self) {
+    fn enter_output(&mut self) {
         self.status = None;
         let sources = match enumerate_audio() {
             Ok(s) => s,
@@ -258,13 +323,31 @@ impl App {
                 Vec::new()
             }
         };
-        self.audio_options = sources
+        let (monitors, mics): (Vec<_>, Vec<_>) = sources.into_iter().partition(|a| a.is_monitor);
+        self.output_options = monitors
             .into_iter()
             .map(Some)
             .chain(std::iter::once(None))
             .collect();
-        self.audio_list.select(Some(0));
-        self.screen = Screen::Audio;
+        self.input_options = mics
+            .into_iter()
+            .map(Some)
+            .chain(std::iter::once(None))
+            .collect();
+        // Default to system audio on, mic off.
+        self.output_list.select(Some(0));
+        self.input_list
+            .select(Some(self.input_options.len().saturating_sub(1)));
+        self.screen = Screen::AudioOutput;
+    }
+
+    fn confirm_output(&mut self) {
+        self.chosen_output = self
+            .output_list
+            .selected()
+            .and_then(|i| self.output_options.get(i))
+            .and_then(|c| c.as_ref().map(|a| a.node_name.clone()));
+        self.screen = Screen::AudioInput;
     }
 
     fn back_to_source(&mut self) {
@@ -273,18 +356,35 @@ impl App {
         self.screen = Screen::Source;
     }
 
+    fn back_to_output(&mut self) {
+        self.status = None;
+        self.screen = Screen::AudioOutput;
+    }
+
     fn start_recording(&mut self) {
-        let audio = match self
-            .audio_list
+        let input = self
+            .input_list
             .selected()
-            .and_then(|i| self.audio_options.get(i))
-        {
-            Some(choice) => choice.as_ref().map(|a| a.node_name.clone()),
-            None => return,
-        };
+            .and_then(|i| self.input_options.get(i))
+            .and_then(|c| c.as_ref().map(|a| a.node_name.clone()));
+        let output = self.chosen_output.clone();
         let Some(source) = self.pending_source.take() else {
             return;
         };
+
+        let (audio_node, mix) = match audio_target(output.as_deref(), input.as_deref()) {
+            AudioTarget::Silent => (None, None),
+            AudioTarget::Single(node) => (Some(node), None),
+            AudioTarget::Mix { output, input } => match setup_mix(&output, &input) {
+                Ok((monitor, mix)) => (Some(monitor), Some(mix)),
+                Err(e) => {
+                    self.pending_source = Some(source);
+                    self.status = Some(format!("{e:#}"));
+                    return;
+                }
+            },
+        };
+
         let path = match output_path() {
             Ok(p) => p,
             Err(e) => {
@@ -293,9 +393,9 @@ impl App {
                 return;
             }
         };
-        match spawn_recorder(&source, audio.as_deref(), &path) {
+        match spawn_recorder(&source, audio_node.as_deref(), &path) {
             Ok(child) => {
-                let meter = audio.as_deref().and_then(spawn_meter);
+                let meter = audio_node.as_deref().and_then(spawn_meter);
                 self.recording = Some(Rec {
                     child,
                     path,
@@ -303,6 +403,7 @@ impl App {
                     started: Instant::now(),
                     final_elapsed: None,
                     meter,
+                    mix,
                 });
                 self.status = None;
                 self.screen = Screen::Recording;
@@ -330,6 +431,7 @@ impl App {
             }
             Err(e) => format!("stop failed: {e:#}"),
         };
+        rec.mix = None;
         self.status = Some(msg);
     }
 }
@@ -388,9 +490,17 @@ fn run(
                 KeyCode::Enter => app.choose_display(),
                 _ => {}
             },
-            Screen::Audio => match k.code {
+            Screen::AudioOutput => match k.code {
                 KeyCode::Char('q') => return Ok(app),
                 KeyCode::Esc => app.back_to_source(),
+                KeyCode::Down | KeyCode::Char('j') => app.move_by(1),
+                KeyCode::Up | KeyCode::Char('k') => app.move_by(-1),
+                KeyCode::Enter => app.confirm_output(),
+                _ => {}
+            },
+            Screen::AudioInput => match k.code {
+                KeyCode::Char('q') => return Ok(app),
+                KeyCode::Esc => app.back_to_output(),
                 KeyCode::Down | KeyCode::Char('j') => app.move_by(1),
                 KeyCode::Up | KeyCode::Char('k') => app.move_by(-1),
                 KeyCode::Enter => app.start_recording(),
@@ -455,7 +565,7 @@ fn row_label(n: usize, o: &Output, hint: &str) -> String {
 
 fn audio_label(choice: &Option<AudioSource>) -> String {
     match choice {
-        None => "No audio (silent)".into(),
+        None => "None".into(),
         Some(a) => a.description.clone(),
     }
 }
@@ -464,7 +574,20 @@ fn draw(f: &mut Frame, app: &mut App, error: Option<&str>) {
     let chunks = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).split(f.area());
     match app.screen {
         Screen::Source => draw_source(f, app, error, chunks[0]),
-        Screen::Audio => draw_audio(f, app, chunks[0]),
+        Screen::AudioOutput => draw_audio_list(
+            f,
+            " captui - output (system audio) ",
+            &app.output_options,
+            &mut app.output_list,
+            chunks[0],
+        ),
+        Screen::AudioInput => draw_audio_list(
+            f,
+            " captui - input (microphone) ",
+            &app.input_options,
+            &mut app.input_list,
+            chunks[0],
+        ),
         Screen::Recording => draw_recording(f, app, chunks[0]),
     }
     draw_footer(f, app, chunks[1]);
@@ -502,12 +625,15 @@ fn draw_source(f: &mut Frame, app: &mut App, error: Option<&str>, area: Rect) {
     }
 }
 
-fn draw_audio(f: &mut Frame, app: &mut App, area: Rect) {
-    let block = Block::default()
-        .title(" captui - select audio ")
-        .borders(Borders::ALL);
-    let items: Vec<ListItem> = app
-        .audio_options
+fn draw_audio_list(
+    f: &mut Frame,
+    title: &str,
+    options: &[Option<AudioSource>],
+    state: &mut ListState,
+    area: Rect,
+) {
+    let block = Block::default().title(title).borders(Borders::ALL);
+    let items: Vec<ListItem> = options
         .iter()
         .map(|c| ListItem::new(audio_label(c)))
         .collect();
@@ -516,7 +642,7 @@ fn draw_audio(f: &mut Frame, app: &mut App, area: Rect) {
         .highlight_symbol("> ")
         .highlight_spacing(HighlightSpacing::Always)
         .highlight_style(Style::new().reversed());
-    f.render_stateful_widget(list, area, &mut app.audio_list);
+    f.render_stateful_widget(list, area, state);
 }
 
 fn draw_recording(f: &mut Frame, app: &App, area: Rect) {
@@ -551,7 +677,8 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
     let stopped = matches!(&app.recording, Some(r) if r.stopped);
     let hint = match app.screen {
         Screen::Source => " up/down move  i identify  enter display  r region  q quit ",
-        Screen::Audio => " up/down move  enter select  esc back  q quit ",
+        Screen::AudioOutput => " up/down move  enter next (input)  esc back  q quit ",
+        Screen::AudioInput => " up/down move  enter record  esc back  q quit ",
         Screen::Recording if stopped => " q quit ",
         Screen::Recording => " s stop  q stop and quit ",
     };

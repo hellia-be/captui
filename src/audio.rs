@@ -7,6 +7,25 @@ pub struct AudioSource {
     pub is_monitor: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AudioTarget {
+    Silent,
+    Single(String),
+    Mix { output: String, input: String },
+}
+
+pub fn audio_target(output: Option<&str>, input: Option<&str>) -> AudioTarget {
+    match (output, input) {
+        (None, None) => AudioTarget::Silent,
+        (Some(o), None) => AudioTarget::Single(o.to_string()),
+        (None, Some(i)) => AudioTarget::Single(i.to_string()),
+        (Some(o), Some(i)) => AudioTarget::Mix {
+            output: o.to_string(),
+            input: i.to_string(),
+        },
+    }
+}
+
 pub fn parse_pw_dump(json: &str) -> Vec<AudioSource> {
     let Ok(value) = serde_json::from_str::<serde_json::Value>(json) else {
         return Vec::new();
@@ -172,6 +191,26 @@ mod tests {
     fn bad_json_is_empty() {
         assert!(parse_pw_dump("not json").is_empty());
         assert!(parse_pw_dump("{}").is_empty());
+    }
+
+    #[test]
+    fn audio_target_combines_output_and_input() {
+        assert_eq!(audio_target(None, None), AudioTarget::Silent);
+        assert_eq!(
+            audio_target(Some("mon"), None),
+            AudioTarget::Single("mon".into())
+        );
+        assert_eq!(
+            audio_target(None, Some("mic")),
+            AudioTarget::Single("mic".into())
+        );
+        assert_eq!(
+            audio_target(Some("mon"), Some("mic")),
+            AudioTarget::Mix {
+                output: "mon".into(),
+                input: "mic".into()
+            }
+        );
     }
 
     #[test]
