@@ -13,6 +13,9 @@ Hand-written, newest first. Not tied to version numbers.
 
 ## Features
 
+- Audio-only mode: press `a` on the source screen to skip video and record
+  straight to a timestamped `.flac` (via pw-record), reusing the output/input
+  pickers and the mix. Lean path for a transcript.
 - Select output and input independently: the audio step is now two screens, an
   output (system audio) and an input (mic), each choosable or None. When both are
   set, captui builds a temporary PipeWire mix (a `captui_mix` null sink fed by a

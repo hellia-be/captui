@@ -92,6 +92,16 @@ an optional argument, so getopt only binds a value when attached. A space-
 separated `-a <node>` silently records the default source (the mic) instead,
 which is the "muted" bug we hit. Node names are runtime state, never hardcoded.
 
+## Audio-only mode
+
+Pressing `a` on the source screen skips video and records straight to a `.flac`
+for a lean transcript. It reuses the same output/input pickers (and the mix when
+both are chosen), but the recorder is `pw-record --target=<node> <path.flac>`
+(libsndfile picks flac from the extension) instead of wf-recorder, and the
+extension comes from `Mode::AudioOnly`. pw-record installs its own SIGINT handler
+and closes the file cleanly, so the same SIGINT stop finalizes the flac. Audio-
+only with neither output nor input is refused (nothing to record).
+
 ## Recorder (src/recorder.rs)
 
 Pure argv builders and output naming, kept IO-free so they are testable in CI.
