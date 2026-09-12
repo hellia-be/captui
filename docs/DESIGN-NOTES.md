@@ -63,13 +63,15 @@ unit-tested. Local runs use `cargo run --features identify`.
 After a source is chosen, the picker offers an audio source. They are enumerated
 from `pw-dump`'s JSON (parsed with serde_json in the pure `parse_pw_dump`, so CI
 can test it) rather than by scraping `wpctl status`'s tree. Each `Audio/Source`
-node is a real input (a mic); each `Audio/Sink` becomes a "Monitor of <sink>"
-option whose value is the sink's node name plus `.monitor`, the PulseAudio name
-for a sink's monitor. The default sink (from the `default.audio.sink` metadata)
-is surfaced first as a plain "System audio (all)" option, and its own monitor is
-not also listed to avoid a duplicate. Order: System audio, then mics, then other
-monitors, then "No audio (silent)"; the first (usually System audio) is
-preselected. Running pw-dump is IO in the app layer.
+node is a real input, labeled "Mic: <name>"; each `Audio/Sink` becomes a
+"Monitor of <sink>" option whose value is the sink's node name plus `.monitor`,
+the PulseAudio name for a sink's monitor. The two defaults from metadata are
+surfaced first as plain options: the default sink (`default.audio.sink`) as
+"System audio (all)" and the default source (`default.audio.source`) as
+"Microphone (default)"; each is excluded from the per-device lists below to
+avoid a duplicate. Order: System audio, Microphone (default), then other mics,
+then other monitors, then "No audio (silent)"; the first is preselected. Running
+pw-dump is IO in the app layer.
 
 The value carried forward is the node name passed to wf-recorder. It must be
 given as `--audio=<node>` (the attached form): wf-recorder's `-a`/`--audio` takes

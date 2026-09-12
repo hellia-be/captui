@@ -13,6 +13,9 @@ Hand-written, newest first. Not tied to version numbers.
 
 ## Features
 
+- Clearer microphone selection: mics are now labeled "Mic: <name>", and the
+  default input is surfaced as a "Microphone (default)" option alongside "System
+  audio (all)", so choosing a specific mic among several is obvious.
 - Live audio level meter: while recording with an audio source, a second
   `pw-record` stream feeds a decaying peak meter shown as a bar on the recording
   screen, so you can see sound is being captured. Completes P1.
