@@ -10,7 +10,8 @@ that TAB (or left/right) cycles between; up/down selects within the focused pane
 and Enter starts recording, at which point the panes are replaced by the recording
 view. This replaced the earlier source -> output -> input wizard.
 
-The Display pane lists each enabled display, then Region and Audio only. The
+The Display pane lists each enabled display, then Window (only when
+`window_geometry_command` is configured), Region, and Audio only. The
 Audio pane lists the outputs to capture — System audio (all), each sink's
 monitor, each playing app, and None. The Mic pane lists the mics plus None. So region and
 audio-only are choices in the Display pane rather than separate keys/screens.
@@ -23,14 +24,26 @@ screen.)
 ## Sources (src/sources.rs)
 
 wlroots screencopy captures outputs and regions, not surfaces. So captui offers
-a display (`wf-recorder -o <output>`) or a region (`-g "X,Y WxH"`).
-A window is captured as a fixed region derived from the compositor's reported
-geometry (Umbriel/Niri IPC); it does not follow the window if it moves.
+a display (`wf-recorder -o <output>`) or a region (`-g "X,Y WxH"`). A window is
+just a region whose rectangle came from the compositor rather than a drag: it is
+a fixed region taken once at start and does not follow the window if it moves.
 
 A region source comes from `slurp` (the Display pane's "Region"): on record it
 spawns slurp for an interactive drag-select and captures its `X,Y WxH` on stdout,
 validated by the pure `parse_geometry` (rejects malformed output and zero-area
 rectangles) into a `Source::Region`. Spawning slurp is IO in the app layer.
+
+The window source (the Display pane's "Window") is the same `Source::Region`, but
+its geometry comes from the user's `window_geometry_command` instead of slurp.
+captui does not speak any compositor's IPC: it runs the configured command with
+`sh -c` (so a pipeline through `jq` works) and parses whatever it prints with the
+same `parse_geometry`. This is deliberately compositor-agnostic — niri, Sway,
+Hyprland, or a hand-rolled script each know how to report their focused window,
+and reshaping that to `X,Y WxH` is the user's one-line command. It also sidesteps
+the old blocker that Umbriel's `msg` is action-only: any working query on the
+machine will do. The Window entry is only shown when the key is set, since without
+a command there is nothing to run. Because a window is represented as a region,
+nothing downstream (argv, recording view, naming) needs a window-specific path.
 
 Displays are enumerated by parsing `wlr-randr`'s plain-text output
 (`parse_wlr_randr`): an output header sits at column 0 as `NAME "DESCRIPTION"`,

@@ -12,6 +12,7 @@ pub struct Config {
     pub transcribe_command: Option<String>,
     pub backend: Option<String>,
     pub no_hw: bool,
+    pub window_geometry_command: Option<String>,
 }
 
 pub fn parse_config(text: &str) -> Config {
@@ -33,6 +34,7 @@ mod tests {
             transcribe_command = "transcribe-remote {}"
             backend = "wl-screenrec"
             no_hw = true
+            window_geometry_command = "niri-window-geometry"
         "#,
         );
         assert_eq!(cfg.output_dir.as_deref(), Some("~/rec"));
@@ -48,6 +50,10 @@ mod tests {
         );
         assert_eq!(cfg.backend.as_deref(), Some("wl-screenrec"));
         assert!(cfg.no_hw);
+        assert_eq!(
+            cfg.window_geometry_command.as_deref(),
+            Some("niri-window-geometry")
+        );
     }
 
     #[test]
