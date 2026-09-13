@@ -474,6 +474,7 @@ enum Section {
 
 enum DisplayOption {
     Display(usize),
+    Window,
     Region,
     AudioOnly,
 }
@@ -514,6 +515,9 @@ impl App {
 
         let mut display_options: Vec<DisplayOption> =
             (0..displays.len()).map(DisplayOption::Display).collect();
+        if config.window_geometry_command.is_some() {
+            display_options.push(DisplayOption::Window);
+        }
         display_options.push(DisplayOption::Region);
         display_options.push(DisplayOption::AudioOnly);
 
@@ -607,6 +611,13 @@ impl App {
             Some(DisplayOption::Display(i)) => match self.displays.get(*i) {
                 Some(o) => (Some(Source::Display(o.name.clone())), false),
                 None => return,
+            },
+            Some(DisplayOption::Window) => match run_window(&self.config) {
+                Ok(src) => (Some(src), false),
+                Err(e) => {
+                    self.status = Some(format!("{e:#}"));
+                    return;
+                }
             },
             Some(DisplayOption::Region) => match run_slurp() {
                 Ok(src) => (Some(src), false),
@@ -1013,6 +1024,32 @@ fn run_slurp() -> Result<Source> {
     Ok(Source::Region(region(x, y, w, h)))
 }
 
+fn run_window(cfg: &Config) -> Result<Source> {
+    let command = cfg
+        .window_geometry_command
+        .as_deref()
+        .ok_or_else(|| anyhow!("no window_geometry_command configured"))?;
+    let out = Command::new("sh")
+        .arg("-c")
+        .arg(command)
+        .output()
+        .context("could not run window_geometry_command")?;
+    if !out.status.success() {
+        bail!(
+            "window_geometry_command failed: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    let (x, y, w, h) = parse_geometry(&text).ok_or_else(|| {
+        anyhow!(
+            "window_geometry_command output not \"X,Y WxH\": {:?}",
+            text.trim()
+        )
+    })?;
+    Ok(Source::Region(region(x, y, w, h)))
+}
+
 #[cfg(feature = "identify")]
 fn run_identify(displays: &[Output]) -> String {
     use std::collections::HashMap;
@@ -1067,6 +1104,7 @@ fn display_option_label(app: &App, opt: &DisplayOption, hints: &[String]) -> Str
             Some(o) => row_label(i + 1, o, hints.get(*i).map(String::as_str).unwrap_or("")),
             None => String::new(),
         },
+        DisplayOption::Window => "Window (focused)".into(),
         DisplayOption::Region => "Region (drag-select)".into(),
         DisplayOption::AudioOnly => "Audio only (no video)".into(),
     }

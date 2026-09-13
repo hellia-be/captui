@@ -12,10 +12,10 @@ live meters, timer/size, video and audio-only modes). See docs/ROADMAP.md.
 
 - One picker with three panes — Display, Audio, Mic — TAB (or ←/→) to switch
   panes, ↑/↓ to select, Enter to record. The Display pane offers each display,
-  Region (drag-select via slurp), and Audio only (no video). The Audio pane lists
-  the outputs (System audio and each monitor) plus any app currently playing
-  sound ("App: <name>", captured non-destructively via pw-link); Mic lists your
-  inputs.
+  Region (drag-select via slurp), Audio only (no video), and a Window entry when
+  `window_geometry_command` is configured. The Audio pane lists the outputs
+  (System audio and each monitor) plus any app currently playing sound
+  ("App: <name>", captured non-destructively via pw-link); Mic lists your inputs.
 - Record with sound via wf-recorder (or wl-screenrec for hardware encode). Mix
   system audio and a mic together.
 - Live recording view: elapsed timer, growing file size, per-source level meters,
@@ -50,11 +50,27 @@ Optional `~/.config/captui/config.toml`, all keys optional:
     transcribe_command = "transcribe-remote {}"   # {} = recording path
     backend = "wf-recorder"             # or "wl-screenrec" for hardware (VAAPI) encode
     no_hw = false                       # wl-screenrec only: true forces software encode
+    window_geometry_command = "..."     # prints the focused window as "X,Y WxH"
 
 `audio_output` / `audio_input` are PipeWire node names (as shown by
 `pactl list short sources`) to preselect in the pickers. `transcribe_command`, if
 set, adds a `t` action on the stopped recording screen that runs the command on
-the file (`{}` is the path, else it is appended). A missing or malformed file
+the file (`{}` is the path, else it is appended).
+
+`window_geometry_command`, if set, adds a "Window (focused)" entry to the Display
+pane. captui runs the command with `sh -c` and expects it to print the target
+window's geometry on stdout as `X,Y WxH` (the same format slurp emits); captui
+then records that rectangle. This keeps window capture compositor-agnostic: point
+it at your compositor's own window query and reshape its output to `X,Y WxH`.
+Anything that prints that one line works — typically a small wrapper script that
+runs the query (`niri msg --json focused-window`, `swaymsg -t get_tree`,
+`hyprctl activewindow -j`, ...) and formats position and size with `jq`. Verify
+your command at a shell first:
+
+    window_geometry_command = "captui-window-geometry"   # your wrapper on PATH
+
+Capture is a fixed region taken once at start, so it does not follow the window
+if it moves. A missing or malformed file
 falls back to built-in defaults.
 
 The `wl-screenrec` backend needs a working VAAPI encoder (AMD/Intel). On NVIDIA

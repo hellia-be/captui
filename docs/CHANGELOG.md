@@ -13,6 +13,16 @@ Hand-written, newest first. Not tied to version numbers.
 
 ## Features
 
+- Window source, compositor-agnostic via config: set `window_geometry_command`
+  in the config to a command that prints the focused window's geometry as
+  `X,Y WxH` (slurp's format), and the Display pane gains a "Window (focused)"
+  entry. Choosing it runs the command (through `sh -c`, so pipes work), parses
+  the geometry, and records that rectangle like a region. The option is hidden
+  when the key is unset, so captui stays portable across compositors: each
+  compositor's own query (niri msg, swaymsg, hyprctl, ...) supplies the geometry
+  through a small user command instead of captui hardcoding any IPC. Capture is a
+  fixed region on the window's output, taken once at start; it does not follow
+  the window if it moves.
 - Per-application audio capture: the Audio pane now also lists each running app
   that is playing sound ("App: <name>"), enumerated from `pw-dump`
   (`Stream/Output/Audio` nodes). Choosing one records just that app: captui
