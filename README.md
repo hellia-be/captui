@@ -50,27 +50,38 @@ Optional `~/.config/captui/config.toml`, all keys optional:
     transcribe_command = "transcribe-remote {}"   # {} = recording path
     backend = "wf-recorder"             # or "wl-screenrec" for hardware (VAAPI) encode
     no_hw = false                       # wl-screenrec only: true forces software encode
-    window_geometry_command = "..."     # prints the focused window as "X,Y WxH"
+    window_geometry_command = "..."     # picks a window, prints it as "X,Y WxH"
 
 `audio_output` / `audio_input` are PipeWire node names (as shown by
 `pactl list short sources`) to preselect in the pickers. `transcribe_command`, if
 set, adds a `t` action on the stopped recording screen that runs the command on
 the file (`{}` is the path, else it is appended).
 
-`window_geometry_command`, if set, adds a "Window (focused)" entry to the Display
-pane. captui runs the command with `sh -c` and expects it to print the target
-window's geometry on stdout as `X,Y WxH` (the same format slurp emits); captui
+`window_geometry_command`, if set, adds a "Window" entry to the Display pane.
+captui runs the command with `sh -c` and expects it to print one line on stdout,
+the target window's geometry as `X,Y WxH` (the same format slurp emits); captui
 then records that rectangle. This keeps window capture compositor-agnostic: point
-it at your compositor's own window query and reshape its output to `X,Y WxH`.
-Anything that prints that one line works — typically a small wrapper script that
-runs the query (`niri msg --json focused-window`, `swaymsg -t get_tree`,
-`hyprctl activewindow -j`, ...) and formats position and size with `jq`. Verify
-your command at a shell first:
+it at your compositor's own window query, run through a small wrapper if needed.
 
-    window_geometry_command = "captui-window-geometry"   # your wrapper on PATH
+Do not use a "focused window" query: captui runs in a terminal, so the focused
+window is captui itself, and you would record captui. Instead pick the target
+window at record time. The portable recipe pipes every window's rectangle into
+`slurp`, which lets you click the one to record (it reads
+`"<x>,<y> <width>x<height> [label]"` lines from stdin and prints the chosen box):
 
-Capture is a fixed region taken once at start, so it does not follow the window
-if it moves. A missing or malformed file
+    # Sway (wrap in a script on your PATH, then set the command to its name):
+    swaymsg -t get_tree \
+      | jq -r '.. | objects | select(.pid and .visible)
+               | "\(.rect.x),\(.rect.y) \(.rect.width)x\(.rect.height) \(.name)"' \
+      | slurp
+
+    window_geometry_command = "captui-pick-window"   # the wrapper above, on PATH
+
+The exact query differs per compositor (`swaymsg -t get_tree`, `hyprctl clients
+-j`, `niri msg --json windows`, ...) and the JSON field names are version
+dependent, so verify your command at a shell first — it must print a single
+`X,Y WxH` line. Capture is a fixed region taken once at start, so it does not
+follow the window if it moves. A missing or malformed file
 falls back to built-in defaults.
 
 The `wl-screenrec` backend needs a working VAAPI encoder (AMD/Intel). On NVIDIA

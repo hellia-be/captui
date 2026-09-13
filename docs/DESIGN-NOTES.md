@@ -36,14 +36,23 @@ rectangles) into a `Source::Region`. Spawning slurp is IO in the app layer.
 The window source (the Display pane's "Window") is the same `Source::Region`, but
 its geometry comes from the user's `window_geometry_command` instead of slurp.
 captui does not speak any compositor's IPC: it runs the configured command with
-`sh -c` (so a pipeline through `jq` works) and parses whatever it prints with the
-same `parse_geometry`. This is deliberately compositor-agnostic — niri, Sway,
-Hyprland, or a hand-rolled script each know how to report their focused window,
-and reshaping that to `X,Y WxH` is the user's one-line command. It also sidesteps
-the old blocker that Umbriel's `msg` is action-only: any working query on the
-machine will do. The Window entry is only shown when the key is set, since without
-a command there is nothing to run. Because a window is represented as a region,
-nothing downstream (argv, recording view, naming) needs a window-specific path.
+`sh -c` (so a pipeline through `jq` and `slurp` works) and parses whatever it
+prints with the same `parse_geometry`. This is deliberately compositor-agnostic —
+niri, Sway, and Hyprland each know how to enumerate their windows, and reshaping
+that to `X,Y WxH` is the user's one-line command. It also sidesteps the old
+blocker that Umbriel's `msg` is action-only: any working query will do. The Window
+entry is only shown when the key is set, since without a command there is nothing
+to run. Because a window is represented as a region, nothing downstream (argv,
+recording view, naming) needs a window-specific path.
+
+The command must not be a "focused window" query. captui runs in a terminal, so
+at record time the focused window is captui itself and such a query would capture
+captui. The window has to be chosen at record time instead: the portable recipe
+pipes every window's rectangle into `slurp`, which reads
+`"<x>,<y> <width>x<height> [label]"` lines from stdin and lets the user click the
+one to record, printing its box. That is why the option is labeled just "Window",
+not "focused": captui does not assume how the command picks the window, and the
+focus-independent click-to-pick flow is the one that actually works from a TUI.
 
 Displays are enumerated by parsing `wlr-randr`'s plain-text output
 (`parse_wlr_randr`): an output header sits at column 0 as `NAME "DESCRIPTION"`,
