@@ -58,26 +58,14 @@ fn enumerate_displays() -> Result<Vec<Output>> {
     Ok(displays)
 }
 
-fn enumerate_audio() -> Result<Vec<AudioSource>> {
-    let out = Command::new("pw-dump")
-        .output()
-        .context("could not run pw-dump (is PipeWire installed?)")?;
-    if !out.status.success() {
-        bail!(
-            "pw-dump failed: {}",
-            String::from_utf8_lossy(&out.stderr).trim()
-        );
-    }
-    Ok(parse_pw_dump(&String::from_utf8_lossy(&out.stdout)))
-}
-
-fn enumerate_apps() -> Vec<AudioSource> {
-    Command::new("pw-dump")
+fn enumerate_audio_and_apps() -> (Vec<AudioSource>, Vec<AudioSource>) {
+    let json = Command::new("pw-dump")
         .output()
         .ok()
         .filter(|o| o.status.success())
-        .map(|o| parse_app_streams(&String::from_utf8_lossy(&o.stdout)))
-        .unwrap_or_default()
+        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+        .unwrap_or_default();
+    (parse_pw_dump(&json), parse_app_streams(&json))
 }
 
 fn load_config() -> Config {
@@ -88,6 +76,11 @@ fn load_config() -> Config {
 }
 
 fn expand_tilde(path: &str) -> PathBuf {
+    if path == "~" {
+        if let Some(home) = std::env::var_os("HOME") {
+            return PathBuf::from(home);
+        }
+    }
     match path.strip_prefix("~/") {
         Some(rest) => match std::env::var_os("HOME") {
             Some(home) => PathBuf::from(home).join(rest),
@@ -195,7 +188,7 @@ fn stop_recorder(child: &mut Child) -> Result<()> {
     let _ = signal::kill(Pid::from_raw(child.id() as i32), Signal::SIGINT);
     child
         .wait()
-        .context("waiting for wf-recorder to finalize")?;
+        .context("waiting for the recorder to finalize")?;
     Ok(())
 }
 
@@ -371,14 +364,21 @@ fn spawn_meter(node: &str) -> Option<Meter> {
     let shared = level.clone();
     let handle = std::thread::spawn(move || {
         let mut buf = [0u8; 4096];
+        let mut carry = 0usize;
         let mut display = 0.0f32;
-        while let Ok(n) = stdout.read(&mut buf) {
+        while let Ok(n) = stdout.read(&mut buf[carry..]) {
             if n == 0 {
                 break;
             }
+            let total = carry + n;
+            let usable = total - total % 4;
             display *= 0.8;
-            display = display.max(samples_peak(&buf[..n]));
+            display = display.max(samples_peak(&buf[..usable]));
             shared.store(display.to_bits(), Ordering::Relaxed);
+            carry = total - usable;
+            if carry > 0 {
+                buf.copy_within(usable..total, 0);
+            }
         }
     });
     Some(Meter {
@@ -452,11 +452,22 @@ impl Rec {
     }
 
     fn size_bytes(&self) -> u64 {
+        if self.stopped {
+            return std::fs::metadata(&self.path).map(|m| m.len()).unwrap_or(0);
+        }
         self.segments
             .iter()
             .filter_map(|p| std::fs::metadata(p).ok())
             .map(|m| m.len())
             .sum()
+    }
+}
+
+impl Drop for Rec {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.child.take() {
+            let _ = stop_recorder(&mut child);
+        }
     }
 }
 
@@ -505,10 +516,10 @@ fn select_node(options: &[Option<AudioSource>], want: Option<&str>) -> Option<us
 
 impl App {
     fn new(displays: Vec<Output>, config: Config) -> Self {
-        let audio = enumerate_audio().unwrap_or_default();
+        let (audio, apps) = enumerate_audio_and_apps();
         let (monitors, mics): (Vec<_>, Vec<_>) = audio.into_iter().partition(|a| a.is_monitor);
         let mut audio_options: Vec<Option<AudioSource>> = monitors.into_iter().map(Some).collect();
-        audio_options.extend(enumerate_apps().into_iter().map(Some));
+        audio_options.extend(apps.into_iter().map(Some));
         audio_options.push(None);
         let mut mic_options: Vec<Option<AudioSource>> = mics.into_iter().map(Some).collect();
         mic_options.push(None);
@@ -840,7 +851,6 @@ impl App {
         if rec.stopped || rec.paused {
             return;
         }
-        // The recorder exiting on its own means it crashed or refused to start.
         let died = matches!(rec.child.as_mut().map(Child::try_wait), Some(Ok(Some(_))));
         if died {
             rec.child = None;
@@ -905,6 +915,15 @@ fn concat_segments(segments: &[PathBuf], out: &Path) -> bool {
     }
 }
 
+struct TerminalGuard;
+
+impl Drop for TerminalGuard {
+    fn drop(&mut self) {
+        let _ = disable_raw_mode();
+        let _ = execute!(io::stdout(), LeaveAlternateScreen);
+    }
+}
+
 fn main() -> Result<()> {
     let displays = enumerate_displays();
     let config = load_config();
@@ -912,6 +931,7 @@ fn main() -> Result<()> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
+    let _guard = TerminalGuard;
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout))?;
 
     let res = run(&mut terminal, displays, config);
