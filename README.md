@@ -13,7 +13,9 @@ live meters, timer/size, video and audio-only modes). See docs/ROADMAP.md.
 - One picker with three panes — Display, Audio, Mic — TAB (or ←/→) to switch
   panes, ↑/↓ to select, Enter to record. The Display pane offers each display,
   Region (drag-select via slurp), and Audio only (no video). The Audio pane lists
-  the outputs (System audio and each monitor); Mic lists your inputs.
+  the outputs (System audio and each monitor) plus any app currently playing
+  sound ("App: <name>", captured non-destructively via pw-link); Mic lists your
+  inputs.
 - Record with sound via wf-recorder (or wl-screenrec for hardware encode). Mix
   system audio and a mic together.
 - Live recording view: elapsed timer, growing file size, per-source level meters,
@@ -34,8 +36,8 @@ live meters, timer/size, video and audio-only modes). See docs/ROADMAP.md.
 
 A wlroots Wayland compositor (Umbriel, Niri, LabWC, Sway, ...) and PipeWire.
 Runtime tools: wf-recorder (or wl-screenrec), slurp, wlr-randr, the PipeWire CLIs
-(pw-record, pw-dump, wpctl), and pactl/parec (pulseaudio) for the audio mix and
-level meters. The packaged binary and the dev shell provide them.
+(pw-record, pw-dump, pw-link, wpctl), and pactl/parec (pulseaudio) for the audio
+mix and level meters. The packaged binary and the dev shell provide them.
 
 ## Configuration
 

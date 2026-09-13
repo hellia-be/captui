@@ -13,6 +13,16 @@ Hand-written, newest first. Not tied to version numbers.
 
 ## Features
 
+- Per-application audio capture: the Audio pane now also lists each running app
+  that is playing sound ("App: <name>"), enumerated from `pw-dump`
+  (`Stream/Output/Audio` nodes). Choosing one records just that app: captui
+  creates the `captui_mix` null sink and fans the app's output into it with
+  `pw-link` (non-destructive, so the app keeps playing normally), then records
+  the mix monitor; the link and sink are torn down on stop. It composes with a
+  mic like any other output. Caveats: an app stream is not a pulse source, so it
+  is metered on the combined mix monitor (not individually) and has no per-source
+  volume; and unlike a plain monitor it can be mixed with a mic without a second
+  loopback. Adds pw-link (PipeWire CLI) to the runtime tools.
 - Reworked picker: one screen with three side-by-side panes — Display, Audio, Mic
   — that TAB (or ←/→) cycles, ↑/↓ selects within, Enter records; it is replaced by
   the recording view on launch. The Display pane holds each display plus Region

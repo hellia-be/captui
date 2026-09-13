@@ -17,7 +17,7 @@
           wl-screenrec
           slurp
           wlr-randr
-          pipewire # pw-record, pw-dump
+          pipewire # pw-record, pw-dump, pw-link
           wireplumber # wpctl
           pulseaudio # pactl, for the null-sink mix when both output and input are chosen
           ffmpeg # concat segments into one file when a recording was paused
