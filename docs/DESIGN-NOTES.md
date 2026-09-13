@@ -219,7 +219,16 @@ directories crate, else `$HOME/Videos`, then a `captures` subdir), spawns
 wf-recorder as a child (stdout nulled). Stopping sends SIGINT via the nix crate
 (never a hard kill, so wf-recorder finalizes the container) and waits for the
 child; quitting while recording stops first, so a capture is never left
-unfinalized.
+unfinalized. That safety also holds when the loop returns an error or panics: the
+`Rec` value owns the child and its `Drop` sends the same SIGINT-and-wait, so an
+unwind finalizes the container and never orphans the recorder. A `TerminalGuard`
+whose `Drop` restores the cooked terminal (leaves raw mode and the alternate
+screen) is held for the run's lifetime, so a panic mid-recording leaves a usable
+terminal rather than a garbled one.
+
+The recording view's size field stats the growing segment files while recording,
+but the finished file once stopped: `concat_segments` renames or removes the part
+files, so after stop only the final path at `Rec::path` still exists.
 
 The recorder's stderr is captured (a drain thread into a shared string), not
 nulled, so failures are not silent. If the recorder exits on its own (polled with
@@ -239,9 +248,13 @@ device parec can open, so its "output" bar meters `captui_mix.monitor` (the
 combined mix) instead. Each bar is a `parec --device=<node> --format=float32le
 --rate=48000 --channels=1 --latency-msec=30` streaming headerless mono float
 samples to stdout; a background thread computes a decaying peak from each chunk
-and publishes it in an atomic. The draw loop reads those atomics and renders the
-bars. The low `--latency-msec` matters: parec's default buffering delivers large
-fragments, which makes the meter lag; a small buffer keeps it responsive.
+and publishes it in an atomic. A pipe read can return a byte count that is not a
+multiple of 4, so the reader carries the trailing 0-3 bytes into the next read and
+only feeds whole float32 samples to the peak helper; without that the stream would
+misalign after the first odd read and the meter would show garbage. The draw loop
+reads those atomics and renders the bars. The low `--latency-msec` matters:
+parec's default buffering delivers large fragments, which makes the meter lag; a
+small buffer keeps it responsive.
 
 parec (PulseAudio), not pw-record, because the meter must accept the same source
 names the recorder uses, including a sink monitor `<sink>.monitor`. pw-record's

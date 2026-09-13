@@ -87,6 +87,21 @@ Hand-written, newest first. Not tied to version numbers.
 
 ## Fixes
 
+- Recording robustness pass (from a code review):
+  - Stopped recordings showed "size: 0 B". The size summed the segment part
+    files, but stopping renames or deletes them into the final file, so nothing
+    was left to stat. It now stats the finished file once stopped.
+  - The level meter could show garbage. A pipe read may return a byte count that
+    is not a multiple of 4, which misaligned the float32 sample stream after the
+    first odd read; the reader now carries the leftover bytes to the next read.
+  - A recorder was left running and its file unfinalized if the UI loop errored
+    or panicked mid-recording. `Rec` now finalizes its child on drop (the same
+    SIGINT-and-wait as a normal stop), and a terminal guard restores the terminal
+    on a panic instead of leaving it in raw mode.
+  - Startup ran `pw-dump` twice (once for outputs/mics, once for apps); it now
+    runs once and feeds both parsers from the same snapshot. Small tidy-ups: the
+    stop wait no longer misnames non-wf-recorder backends, and `output_dir = "~"`
+    expands.
 - Audio-only recording captured the microphone instead of the chosen source:
   the recorder was `pw-record --target=<node>`, but `pw-record --target` wants a
   PipeWire node and cannot resolve a pulse `<sink>.monitor` name, so it silently
