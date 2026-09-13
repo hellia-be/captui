@@ -35,9 +35,9 @@ live meters, timer/size, video and audio-only modes). See docs/ROADMAP.md.
 ## Requirements
 
 A wlroots Wayland compositor (Umbriel, Niri, LabWC, Sway, ...) and PipeWire.
-Runtime tools: wf-recorder (or wl-screenrec), slurp, wlr-randr, the PipeWire CLIs
-(pw-record, pw-dump, pw-link, wpctl), and pactl/parec (pulseaudio) for the audio
-mix and level meters. The packaged binary and the dev shell provide them.
+Runtime tools: wf-recorder (or wl-screenrec), slurp, wlr-randr, ffmpeg, the
+PipeWire CLIs (pw-dump, pw-link, wpctl), and pactl/parec (pulseaudio) for the
+audio mix and level meters. The packaged binary and the dev shell provide them.
 
 ## Configuration
 

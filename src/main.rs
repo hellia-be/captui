@@ -154,14 +154,24 @@ fn stderr_tail(buf: &Arc<Mutex<String>>) -> String {
 }
 
 fn spawn_audio_recorder(node: &str, out: &Path) -> Result<Child> {
-    Command::new("pw-record")
-        .arg(format!("--target={node}"))
+    Command::new("ffmpeg")
+        .args([
+            "-hide_banner",
+            "-nostdin",
+            "-loglevel",
+            "error",
+            "-y",
+            "-f",
+            "pulse",
+            "-i",
+            node,
+        ])
         .arg(out)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
-        .context("could not spawn pw-record")
+        .context("could not spawn ffmpeg")
 }
 
 fn spawn_recorder(

@@ -132,11 +132,20 @@ which is the "muted" bug we hit. Node names are runtime state, never hardcoded.
 
 Pressing `a` on the source screen skips video and records straight to a `.flac`
 for a lean transcript. It reuses the same output/input pickers (and the mix when
-both are chosen), but the recorder is `pw-record --target=<node> <path.flac>`
-(libsndfile picks flac from the extension) instead of wf-recorder, and the
-extension comes from `Mode::AudioOnly`. pw-record installs its own SIGINT handler
-and closes the file cleanly, so the same SIGINT stop finalizes the flac. Audio-
-only with neither output nor input is refused (nothing to record).
+both are chosen), but the recorder is `ffmpeg -f pulse -i <node> <path.flac>`
+(ffmpeg picks flac from the extension) instead of wf-recorder, and the extension
+comes from `Mode::AudioOnly`. ffmpeg finalizes the flac on SIGINT, so the same
+stop closes the file cleanly. Audio-only with neither output nor input is refused
+(nothing to record).
+
+It records via ffmpeg's PulseAudio input, not `pw-record --target=<node>`, for
+the same reason the meters use `parec` (see Audio metering): `pw-record --target`
+wants a PipeWire node and cannot resolve a pulse `<sink>.monitor` name, so it
+silently fell back to the default source (the mic) and every monitor or app
+capture recorded the microphone instead of the intended audio. ffmpeg's pulse
+input uses the same PulseAudio device namespace the recorder's `--audio=` and the
+meters already rely on, so a mic, a sink monitor, and the `captui_mix.monitor`
+all resolve correctly.
 
 ## Recorder (src/recorder.rs)
 
@@ -157,7 +166,7 @@ better quality-per-bitrate and lower CPU where the GPU supports it). `Backend`
 (pure) dispatches to the matching argv builder. Both take the same `-o`/`-g`
 source and `-f` output; they differ on audio — wf-recorder wants the attached
 `--audio=<node>`, wl-screenrec wants `--audio --audio-device <node>`. Audio-only
-mode always uses pw-record regardless of backend. wl-screenrec's hardware VAAPI
+mode always uses ffmpeg's pulse input regardless of backend. wl-screenrec's hardware VAAPI
 path fails to negotiate a capture format on NVIDIA (block-linear dmabuf
 modifiers), so `no_hw = true` in the config adds `--no-hw` (software encode) and
 NVIDIA users are better off on the default wf-recorder.

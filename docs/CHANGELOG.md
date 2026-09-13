@@ -76,6 +76,14 @@ Hand-written, newest first. Not tied to version numbers.
 
 ## Fixes
 
+- Audio-only recording captured the microphone instead of the chosen source:
+  the recorder was `pw-record --target=<node>`, but `pw-record --target` wants a
+  PipeWire node and cannot resolve a pulse `<sink>.monitor` name, so it silently
+  fell back to the default source (the mic). Every monitor and per-app audio-only
+  capture recorded the room mic. Record with `ffmpeg -f pulse -i <node>` instead
+  (the same PulseAudio namespace the recorder's `--audio=` and the meters use), so
+  a mic, a sink monitor, and the mix monitor all resolve correctly. (The A/V path
+  via wf-recorder `--audio=` was already correct.)
 - wl-screenrec `no_hw` option and shorter error display: `no_hw = true` in the
   config forces software encode (`--no-hw`), and the failure message shown in the
   UI is truncated. wl-screenrec's hardware path can't negotiate a capture format
