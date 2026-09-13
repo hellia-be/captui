@@ -12,8 +12,8 @@ part of done.
 
 American English. No em or en dashes in code, UI, or docs. No version numbers in
 filenames. Concise code, few comments; durable rationale goes in
-docs/DESIGN-NOTES.md, not inline. Commit subjects are short imperative with a
-trailing `(#PR)` and reference a ROADMAP item.
+docs/DESIGN-NOTES.md, not inline. Commit subjects are short imperative; the
+squash-merge appends the `(#PR)`, so do not add it yourself.
 
 ## AI transparency
 
