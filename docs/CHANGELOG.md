@@ -13,6 +13,16 @@ Hand-written, newest first. Not tied to version numbers.
 
 ## Features
 
+- Per-application audio capture: the Audio pane now also lists each running app
+  that is playing sound ("App: <name>"), enumerated from `pw-dump`
+  (`Stream/Output/Audio` nodes). Choosing one records just that app: captui
+  creates the `captui_mix` null sink and fans the app's output into it with
+  `pw-link` (non-destructive, so the app keeps playing normally), then records
+  the mix monitor; the link and sink are torn down on stop. It composes with a
+  mic like any other output. Caveats: an app stream is not a pulse source, so it
+  is metered on the combined mix monitor (not individually) and has no per-source
+  volume; and unlike a plain monitor it can be mixed with a mic without a second
+  loopback. Adds pw-link (PipeWire CLI) to the runtime tools.
 - Reworked picker: one screen with three side-by-side panes — Display, Audio, Mic
   — that TAB (or ←/→) cycles, ↑/↓ selects within, Enter records; it is replaced by
   the recording view on launch. The Display pane holds each display plus Region
@@ -66,6 +76,14 @@ Hand-written, newest first. Not tied to version numbers.
 
 ## Fixes
 
+- Audio-only recording captured the microphone instead of the chosen source:
+  the recorder was `pw-record --target=<node>`, but `pw-record --target` wants a
+  PipeWire node and cannot resolve a pulse `<sink>.monitor` name, so it silently
+  fell back to the default source (the mic). Every monitor and per-app audio-only
+  capture recorded the room mic. Record with `ffmpeg -f pulse -i <node>` instead
+  (the same PulseAudio namespace the recorder's `--audio=` and the meters use), so
+  a mic, a sink monitor, and the mix monitor all resolve correctly. (The A/V path
+  via wf-recorder `--audio=` was already correct.)
 - wl-screenrec `no_hw` option and shorter error display: `no_hw = true` in the
   config forces software encode (`--no-hw`), and the failure message shown in the
   UI is truncated. wl-screenrec's hardware path can't negotiate a capture format

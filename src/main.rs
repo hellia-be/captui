@@ -27,9 +27,7 @@ use nix::unistd::Pid;
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, HighlightSpacing, List, ListItem, ListState, Paragraph};
 
-use captui::audio::{
-    audio_target, parse_pw_dump, parse_sink_input_index, AudioSource, AudioTarget,
-};
+use captui::audio::{parse_app_streams, parse_pw_dump, parse_sink_input_index, AudioSource};
 use captui::config::{parse_config, Config};
 use captui::format::{format_duration, format_size};
 use captui::meter::{meter_bar, samples_peak};
@@ -71,6 +69,15 @@ fn enumerate_audio() -> Result<Vec<AudioSource>> {
         );
     }
     Ok(parse_pw_dump(&String::from_utf8_lossy(&out.stdout)))
+}
+
+fn enumerate_apps() -> Vec<AudioSource> {
+    Command::new("pw-dump")
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| parse_app_streams(&String::from_utf8_lossy(&o.stdout)))
+        .unwrap_or_default()
 }
 
 fn load_config() -> Config {
@@ -147,14 +154,24 @@ fn stderr_tail(buf: &Arc<Mutex<String>>) -> String {
 }
 
 fn spawn_audio_recorder(node: &str, out: &Path) -> Result<Child> {
-    Command::new("pw-record")
-        .arg(format!("--target={node}"))
+    Command::new("ffmpeg")
+        .args([
+            "-hide_banner",
+            "-nostdin",
+            "-loglevel",
+            "error",
+            "-y",
+            "-f",
+            "pulse",
+            "-i",
+            node,
+        ])
         .arg(out)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
-        .context("could not spawn pw-record")
+        .context("could not spawn ffmpeg")
 }
 
 fn spawn_recorder(
@@ -217,6 +234,12 @@ fn pactl_load(args: &[&str]) -> Result<String> {
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
+#[derive(Clone)]
+enum Ingredient {
+    Source(String),
+    App(u32),
+}
+
 struct MixSetup {
     monitor: String,
     mix: AudioMix,
@@ -235,7 +258,32 @@ fn load_loopback(source: &str, mix: &mut AudioMix) -> Result<String> {
     Ok(id)
 }
 
-fn setup_mix(output: &str, input: &str) -> Result<MixSetup> {
+fn pw_link(app_id: u32) -> Result<()> {
+    let out = Command::new("pw-link")
+        .args([app_id.to_string(), MIX_SINK.to_string()])
+        .output()
+        .context("could not run pw-link")?;
+    if !out.status.success() {
+        bail!(
+            "pw-link {app_id} -> {MIX_SINK}: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
+    Ok(())
+}
+
+fn add_ingredient(ing: Option<&Ingredient>, mix: &mut AudioMix) -> Result<Option<String>> {
+    match ing {
+        Some(Ingredient::Source(name)) => Ok(Some(load_loopback(name, mix)?)),
+        Some(Ingredient::App(id)) => {
+            pw_link(*id)?;
+            Ok(None)
+        }
+        None => Ok(None),
+    }
+}
+
+fn setup_mix(output: Option<&Ingredient>, input: Option<&Ingredient>) -> Result<MixSetup> {
     let sink = pactl_load(&[
         "module-null-sink",
         &format!("sink_name={MIX_SINK}"),
@@ -244,8 +292,8 @@ fn setup_mix(output: &str, input: &str) -> Result<MixSetup> {
     let mut mix = AudioMix {
         modules: vec![sink],
     };
-    let out_module = load_loopback(output, &mut mix)?;
-    let in_module = load_loopback(input, &mut mix)?;
+    let out_module = add_ingredient(output, &mut mix)?;
+    let in_module = add_ingredient(input, &mut mix)?;
 
     let sink_inputs = Command::new("pactl")
         .args(["list", "sink-inputs"])
@@ -253,10 +301,11 @@ fn setup_mix(output: &str, input: &str) -> Result<MixSetup> {
         .ok()
         .filter(|o| o.status.success())
         .map(|o| String::from_utf8_lossy(&o.stdout).into_owned());
-    let idx = |module: &str| {
-        sink_inputs
+    let idx = |module: &Option<String>| {
+        module
             .as_deref()
-            .and_then(|t| parse_sink_input_index(t, module))
+            .zip(sink_inputs.as_deref())
+            .and_then(|(m, t)| parse_sink_input_index(t, m))
     };
 
     Ok(MixSetup {
@@ -458,6 +507,7 @@ impl App {
         let audio = enumerate_audio().unwrap_or_default();
         let (monitors, mics): (Vec<_>, Vec<_>) = audio.into_iter().partition(|a| a.is_monitor);
         let mut audio_options: Vec<Option<AudioSource>> = monitors.into_iter().map(Some).collect();
+        audio_options.extend(enumerate_apps().into_iter().map(Some));
         audio_options.push(None);
         let mut mic_options: Vec<Option<AudioSource>> = mics.into_iter().map(Some).collect();
         mic_options.push(None);
@@ -572,7 +622,7 @@ impl App {
             .audio_list
             .selected()
             .and_then(|i| self.audio_options.get(i))
-            .and_then(|c| c.as_ref().map(|a| a.node_name.clone()));
+            .and_then(Clone::clone);
         let input = self
             .mic_list
             .selected()
@@ -585,19 +635,24 @@ impl App {
         &mut self,
         source: Option<Source>,
         audio_only: bool,
-        output: Option<String>,
+        output: Option<AudioSource>,
         input: Option<String>,
     ) {
-        let target = audio_target(output.as_deref(), input.as_deref());
-        if audio_only && target == AudioTarget::Silent {
-            self.status = Some("audio-only needs system audio or a mic".into());
-            return;
-        }
+        let out_ing = output.as_ref().map(|o| {
+            if o.app {
+                Ingredient::App(o.node_name.parse().unwrap_or(0))
+            } else {
+                Ingredient::Source(o.node_name.clone())
+            }
+        });
+        let in_ing = input.as_ref().map(|m| Ingredient::Source(m.clone()));
 
-        let (audio_node, mix, out_input, in_input) = match target {
-            AudioTarget::Silent => (None, None, None, None),
-            AudioTarget::Single(node) => (Some(node), None, None, None),
-            AudioTarget::Mix { output, input } => match setup_mix(&output, &input) {
+        let (audio_node, mix, out_sink_input, in_sink_input) = match (&out_ing, &in_ing) {
+            (None, None) => (None, None, None, None),
+            (Some(Ingredient::Source(name)), None) | (None, Some(Ingredient::Source(name))) => {
+                (Some(name.clone()), None, None, None)
+            }
+            _ => match setup_mix(out_ing.as_ref(), in_ing.as_ref()) {
                 Ok(s) => (
                     Some(s.monitor),
                     Some(s.mix),
@@ -610,6 +665,19 @@ impl App {
                 }
             },
         };
+
+        if audio_only && audio_node.is_none() {
+            self.status = Some("audio-only needs an audio source or a mic".into());
+            return;
+        }
+
+        let out_meter = output.as_ref().map(|o| {
+            if o.app {
+                audio_node.clone().unwrap_or_default()
+            } else {
+                o.node_name.clone()
+            }
+        });
 
         let mode = if audio_only {
             Mode::AudioOnly
@@ -646,11 +714,11 @@ impl App {
             Ok(mut child) => {
                 let stderr = capture_stderr(&mut child);
                 let mut sources = Vec::new();
-                if let Some(meter) = output.as_deref().and_then(spawn_meter) {
+                if let Some(meter) = out_meter.as_deref().and_then(spawn_meter) {
                     sources.push(SourceControl {
                         label: "output",
                         meter,
-                        sink_input: out_input,
+                        sink_input: out_sink_input,
                         volume: 100,
                     });
                 }
@@ -658,7 +726,7 @@ impl App {
                     sources.push(SourceControl {
                         label: "input",
                         meter,
-                        sink_input: in_input,
+                        sink_input: in_sink_input,
                         volume: 100,
                     });
                 }

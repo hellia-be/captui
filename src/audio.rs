@@ -5,25 +5,42 @@ pub struct AudioSource {
     pub node_name: String,
     pub description: String,
     pub is_monitor: bool,
+    /// An application output stream (routed via pw-link), not a plain source.
+    pub app: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum AudioTarget {
-    Silent,
-    Single(String),
-    Mix { output: String, input: String },
-}
+pub fn parse_app_streams(json: &str) -> Vec<AudioSource> {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(json) else {
+        return Vec::new();
+    };
+    let Some(objects) = value.as_array() else {
+        return Vec::new();
+    };
 
-pub fn audio_target(output: Option<&str>, input: Option<&str>) -> AudioTarget {
-    match (output, input) {
-        (None, None) => AudioTarget::Silent,
-        (Some(o), None) => AudioTarget::Single(o.to_string()),
-        (None, Some(i)) => AudioTarget::Single(i.to_string()),
-        (Some(o), Some(i)) => AudioTarget::Mix {
-            output: o.to_string(),
-            input: i.to_string(),
-        },
+    let mut apps = Vec::new();
+    for obj in objects {
+        let props = &obj["info"]["props"];
+        if props["media.class"].as_str() != Some("Stream/Output/Audio") {
+            continue;
+        }
+        let Some(id) = obj["id"].as_u64() else {
+            continue;
+        };
+        let label = props["application.name"]
+            .as_str()
+            .or_else(|| props["media.name"].as_str())
+            .or_else(|| props["node.name"].as_str())
+            .filter(|s| !s.is_empty())
+            .unwrap_or("app");
+        apps.push(AudioSource {
+            node_name: id.to_string(),
+            description: format!("App: {label}"),
+            is_monitor: false,
+            app: true,
+        });
     }
+    apps.sort_by(|a, b| a.description.cmp(&b.description));
+    apps
 }
 
 pub fn parse_pw_dump(json: &str) -> Vec<AudioSource> {
@@ -59,6 +76,7 @@ pub fn parse_pw_dump(json: &str) -> Vec<AudioSource> {
                 node_name: format!("{name}.monitor"),
                 description: format!("Monitor of {description}"),
                 is_monitor: true,
+                app: false,
             });
         }
     }
@@ -72,6 +90,7 @@ pub fn parse_pw_dump(json: &str) -> Vec<AudioSource> {
             node_name: format!("{sink}.monitor"),
             description: "System audio (all)".to_string(),
             is_monitor: true,
+            app: false,
         });
     }
     sources.extend(
@@ -84,6 +103,7 @@ pub fn parse_pw_dump(json: &str) -> Vec<AudioSource> {
                     format!("Mic: {desc}")
                 },
                 is_monitor: false,
+                app: false,
             }),
     );
     sources.extend(monitors);
@@ -155,11 +175,13 @@ mod tests {
                     node_name: "alsa_input.pci-0000_0c_00.4.analog-stereo".into(),
                     description: "Mic: Built-in Microphone".into(),
                     is_monitor: false,
+                    app: false,
                 },
                 AudioSource {
                     node_name: "alsa_output.pci-0000_0c_00.4.analog-stereo.monitor".into(),
                     description: "Monitor of Speakers".into(),
                     is_monitor: true,
+                    app: false,
                 },
             ]
         );
@@ -195,11 +217,13 @@ mod tests {
                     node_name: "mic_a".into(),
                     description: "Mic: Headset (default)".into(),
                     is_monitor: false,
+                    app: false,
                 },
                 AudioSource {
                     node_name: "mic_b".into(),
                     description: "Mic: Webcam".into(),
                     is_monitor: false,
+                    app: false,
                 },
             ]
         );
@@ -227,22 +251,26 @@ Sink Input #11
     }
 
     #[test]
-    fn audio_target_combines_output_and_input() {
-        assert_eq!(audio_target(None, None), AudioTarget::Silent);
+    fn parses_app_output_streams() {
+        let json = r#"[
+          { "id": 55, "info": { "props": {
+            "media.class": "Stream/Output/Audio",
+            "application.name": "Firefox" } } },
+          { "id": 60, "info": { "props": {
+            "media.class": "Stream/Input/Audio",
+            "application.name": "OBS" } } },
+          { "id": 61, "info": { "props": {
+            "media.class": "Audio/Sink", "node.name": "spk" } } }
+        ]"#;
+        let apps = parse_app_streams(json);
         assert_eq!(
-            audio_target(Some("mon"), None),
-            AudioTarget::Single("mon".into())
-        );
-        assert_eq!(
-            audio_target(None, Some("mic")),
-            AudioTarget::Single("mic".into())
-        );
-        assert_eq!(
-            audio_target(Some("mon"), Some("mic")),
-            AudioTarget::Mix {
-                output: "mon".into(),
-                input: "mic".into()
-            }
+            apps,
+            vec![AudioSource {
+                node_name: "55".into(),
+                description: "App: Firefox".into(),
+                is_monitor: false,
+                app: true,
+            }]
         );
     }
 
@@ -275,16 +303,19 @@ Sink Input #11
                     node_name: "alsa_output.speakers.monitor".into(),
                     description: "System audio (all)".into(),
                     is_monitor: true,
+                    app: false,
                 },
                 AudioSource {
                     node_name: "mic".into(),
                     description: "Mic: Mic".into(),
                     is_monitor: false,
+                    app: false,
                 },
                 AudioSource {
                     node_name: "hdmi.tv.monitor".into(),
                     description: "Monitor of TV".into(),
                     is_monitor: true,
+                    app: false,
                 },
             ]
         );

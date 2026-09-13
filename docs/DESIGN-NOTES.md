@@ -11,8 +11,8 @@ and Enter starts recording, at which point the panes are replaced by the recordi
 view. This replaced the earlier source -> output -> input wizard.
 
 The Display pane lists each enabled display, then Region and Audio only. The
-Audio pane lists the outputs to capture — System audio (all) plus each sink's
-monitor, and None. The Mic pane lists the mics plus None. So region and
+Audio pane lists the outputs to capture — System audio (all), each sink's
+monitor, each playing app, and None. The Mic pane lists the mics plus None. So region and
 audio-only are choices in the Display pane rather than separate keys/screens.
 
 (There is no "all screens" option: wf-recorder captures one output per instance,
@@ -83,20 +83,31 @@ default source (`default.audio.source`) is marked "(default)" and sorted first,
 never collapsed into an opaque label that hides which physical device it is (that
 hid a user's real mic).
 
-The UI splits these across the two audio panes by `is_monitor`: the Audio pane
-lists the monitors (System audio (all) first, then each sink's monitor) plus None,
-preselecting `config.audio_output` if set; the Mic pane lists the mics plus None,
-preselecting the configured or default mic.
+Individual apps are enumerated separately by `parse_app_streams` (also pure):
+every `Stream/Output/Audio` node is one app currently playing sound, labeled
+"App: <name>" (from `application.name`, falling back to `media.name` then
+`node.name`) and carrying `app: true`. Its `node_name` is the PipeWire object id,
+not a pulse source name, because an app stream is not a source you can hand to a
+recorder or to parec; it is a graph node you route (see below).
 
-`audio_target(output, input)` (pure) turns the two choices into one of: Silent
-(neither), Single (exactly one, recorded directly), or Mix (both). For Mix,
-captui builds a temporary PipeWire graph via pactl: a `module-null-sink` named
-`captui_mix`, plus a `module-loopback` from each chosen source into it, then
-records `captui_mix.monitor`. The loaded module ids are tracked and unloaded in
-reverse on stop or drop (an `AudioMix` `Drop`), so the graph never leaks; wf-
-recorder is finalized first, then the mix is torn down. This is why pactl
-(pulseaudio) is a runtime dependency. A short loopback latency (20ms) keeps the
-mixed audio close to video.
+The UI splits these across the two audio panes: the Audio pane lists the monitors
+(System audio (all) first, then each sink's monitor) followed by the apps, plus
+None, preselecting `config.audio_output` if set; the Mic pane lists the mics plus
+None, preselecting the configured or default mic.
+
+Routing is decided inline from the chosen `(output, input)` (each mapped to an
+`Ingredient`: a pulse `Source` name, or an `App(object id)`). Neither chosen is
+silent; exactly one plain source is recorded directly; anything else — two
+ingredients, or any app (which cannot be recorded directly) — builds a temporary
+PipeWire graph via pactl: a `module-null-sink` named `captui_mix`, into which
+each ingredient is fed — a `Source` via `module-loopback`, an `App` via a
+`pw-link <object id> captui_mix` fan-out — then records `captui_mix.monitor`. The
+pw-link is non-destructive: it adds a link so the app keeps playing to its normal
+sink as well, and it disappears when the null sink is unloaded. The loaded module
+ids are tracked and unloaded in reverse on stop or drop (an `AudioMix` `Drop`), so
+the graph never leaks; wf-recorder is finalized first, then the mix is torn down.
+This is why pactl (pulseaudio) and pw-link (pipewire) are runtime dependencies. A
+short loopback latency (20ms) keeps the mixed audio close to video.
 
 In the mix case each loopback's sink-input on `captui_mix` is resolved from
 `pactl list sink-inputs` (matching its owner module id, via the pure
@@ -104,8 +115,12 @@ In the mix case each loopback's sink-input on `captui_mix` is resolved from
 with `pactl set-sink-input-volume` (left/right on the focused source) without
 touching system volume. Resolution is best-effort: if an index cannot be found,
 that source simply has no volume control and metering/recording still work.
-Volume control exists only for the mix; a single directly-recorded source has
-none (adjusting it would change the device's global volume).
+Volume control exists only for loopback sources in the mix; a single directly-
+recorded source has none (adjusting it would change the device's global volume),
+and an app has none either: a pw-link fan-out is not a loopback sink-input, so
+there is nothing to attenuate short of the app's own global volume. An app is
+also metered on the combined `captui_mix.monitor` rather than individually, since
+parec cannot target a bare graph node; a plain source keeps its own meter.
 
 The value carried forward is the node name passed to wf-recorder. It must be
 given as `--audio=<node>` (the attached form): wf-recorder's `-a`/`--audio` takes
@@ -117,11 +132,20 @@ which is the "muted" bug we hit. Node names are runtime state, never hardcoded.
 
 Pressing `a` on the source screen skips video and records straight to a `.flac`
 for a lean transcript. It reuses the same output/input pickers (and the mix when
-both are chosen), but the recorder is `pw-record --target=<node> <path.flac>`
-(libsndfile picks flac from the extension) instead of wf-recorder, and the
-extension comes from `Mode::AudioOnly`. pw-record installs its own SIGINT handler
-and closes the file cleanly, so the same SIGINT stop finalizes the flac. Audio-
-only with neither output nor input is refused (nothing to record).
+both are chosen), but the recorder is `ffmpeg -f pulse -i <node> <path.flac>`
+(ffmpeg picks flac from the extension) instead of wf-recorder, and the extension
+comes from `Mode::AudioOnly`. ffmpeg finalizes the flac on SIGINT, so the same
+stop closes the file cleanly. Audio-only with neither output nor input is refused
+(nothing to record).
+
+It records via ffmpeg's PulseAudio input, not `pw-record --target=<node>`, for
+the same reason the meters use `parec` (see Audio metering): `pw-record --target`
+wants a PipeWire node and cannot resolve a pulse `<sink>.monitor` name, so it
+silently fell back to the default source (the mic) and every monitor or app
+capture recorded the microphone instead of the intended audio. ffmpeg's pulse
+input uses the same PulseAudio device namespace the recorder's `--audio=` and the
+meters already rely on, so a mic, a sink monitor, and the `captui_mix.monitor`
+all resolve correctly.
 
 ## Recorder (src/recorder.rs)
 
@@ -142,7 +166,7 @@ better quality-per-bitrate and lower CPU where the GPU supports it). `Backend`
 (pure) dispatches to the matching argv builder. Both take the same `-o`/`-g`
 source and `-f` output; they differ on audio — wf-recorder wants the attached
 `--audio=<node>`, wl-screenrec wants `--audio --audio-device <node>`. Audio-only
-mode always uses pw-record regardless of backend. wl-screenrec's hardware VAAPI
+mode always uses ffmpeg's pulse input regardless of backend. wl-screenrec's hardware VAAPI
 path fails to negotiate a capture format on NVIDIA (block-linear dmabuf
 modifiers), so `no_hw = true` in the config adds `--no-hw` (software encode) and
 NVIDIA users are better off on the default wf-recorder.
@@ -188,7 +212,9 @@ The "is sound coming in" confirmation is a live level bar per chosen source on
 the recording screen: an "output" bar and/or an "input" bar. Each meters the raw
 chosen node (the sink monitor and/or the mic) directly, not the mixed
 `captui_mix.monitor`, so the two levels stay separate even when both are being
-mixed into the recording. Each bar is a `parec --device=<node> --format=float32le
+mixed into the recording. The one exception is an app output: it is not a pulse
+device parec can open, so its "output" bar meters `captui_mix.monitor` (the
+combined mix) instead. Each bar is a `parec --device=<node> --format=float32le
 --rate=48000 --channels=1 --latency-msec=30` streaming headerless mono float
 samples to stdout; a background thread computes a decaying peak from each chunk
 and publishes it in an atomic. The draw loop reads those atomics and renders the

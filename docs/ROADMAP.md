@@ -13,7 +13,5 @@ All P1 items are done. See docs/CHANGELOG.md.
    a compositor that reports window geometry over IPC; Umbriel's `msg` is
    action-only (no query), so it needs an Umbriel query action first. The captui
    side is a pluggable WindowProvider once a backend can supply geometry.
-2. Per-application audio capture (record one app's output stream, via a PipeWire
-   stream/loopback), as another Audio-pane option.
-3. All screens as separate files (parallel recorders, one output each) — the only
+2. All screens as separate files (parallel recorders, one output each) — the only
    portable way, since wf-recorder cannot capture a region spanning outputs.
