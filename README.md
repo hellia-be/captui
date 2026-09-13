@@ -6,7 +6,7 @@ one-key start/stop. Recordings feed a Whisper transcription flow. Rust +
 ratatui, packaged as a Nix flake.
 
 Status: working recorder (source/region picker, output+input audio with mixing,
-live meters, timer/size, video and audio-only modes). See docs/ROADMAP.md.
+live meters, timer/size, video and audio-only modes). See docs/CHANGELOG.md.
 
 ## What it does
 
@@ -27,7 +27,6 @@ live meters, timer/size, video and audio-only modes). See docs/ROADMAP.md.
 ## Documentation
 
 - docs/DESIGN-NOTES.md - why each subsystem is built the way it is
-- docs/ROADMAP.md - priority-ordered backlog
 - docs/CONTRIBUTING.md - workflow, style, and the CI gate
 - docs/CHANGELOG.md - what has shipped
 - CLAUDE.md - agent-facing brief (conventions summary + pointers)

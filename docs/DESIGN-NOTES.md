@@ -208,8 +208,8 @@ Video quality is set explicitly instead of relying on wf-recorder's defaults,
 which look soft (especially screen text): software libx264 at `crf=18` (visually
 near-lossless, sharper than the ~23 default) with `preset=fast` to stay
 realtime. These live as constants in recorder.rs; a future config item can
-expose them, and hardware (VAAPI) encoding is the separate wl-screenrec backend
-on the roadmap. `timestamped_name`
+expose them, and hardware (VAAPI) encoding is the separate wl-screenrec backend.
+`timestamped_name`
 formats a UTC `captui-YYYYMMDD-HHMMSS.<ext>` name from a Unix timestamp using the
 days-from-civil algorithm, so no date crate is pulled in.
 

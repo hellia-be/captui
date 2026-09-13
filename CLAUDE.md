@@ -76,9 +76,9 @@ timers. The `nix` crate for sending SIGINT to the child. `serde` for config.
   feature, push, open a PR with `gh`, `gh pr checks <n> --watch`, squash-merge
   only on green (`gh pr merge --squash --delete-branch`). Never merge red; do not
   sit on a finished branch.
-- **Commit subjects:** short imperative with a trailing `(#PR)`, referencing the
-  `docs/ROADMAP.md` item, e.g. `Region source via slurp (ROADMAP P1 item 2)
-  (#4)`. Not Conventional Commits.
+- **Commit subjects:** short imperative, e.g. `Region source via slurp`. The
+  squash-merge appends the `(#PR)`, so do not add it yourself. Not Conventional
+  Commits.
 - **Public repo, full AI transparency.** This is a public, open-source project,
   and we are 100 percent transparent about Claude usage: every commit Claude
   co-authors ends with `Co-Authored-By: Claude <noreply@anthropic.com>`, PR
@@ -121,8 +121,7 @@ src/                   # main.rs, ui/, capture/ (recorder, sources, audio, hando
 flake.nix              # package (.#default) + devShell; nixos-config consumes this
 Cargo.toml Cargo.lock  # Cargo.lock IS committed
 docs/                  # DESIGN-NOTES.md (per-subsystem why), CHANGELOG.md
-                       #   (hand-written narrative, no semver), CONTRIBUTING.md,
-                       #   ROADMAP.md (priority-ordered backlog, items P1/P2)
+                       #   (hand-written narrative, no semver), CONTRIBUTING.md
 scripts/               # bash helpers if any (set -euo pipefail, shellcheck-linted)
 tests/                 # pure integration tests
 .github/               # workflows/ci.yml, dependabot.yml (cargo + github-actions)
