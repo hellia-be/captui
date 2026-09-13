@@ -1104,7 +1104,7 @@ fn display_option_label(app: &App, opt: &DisplayOption, hints: &[String]) -> Str
             Some(o) => row_label(i + 1, o, hints.get(*i).map(String::as_str).unwrap_or("")),
             None => String::new(),
         },
-        DisplayOption::Window => "Window (focused)".into(),
+        DisplayOption::Window => "Window".into(),
         DisplayOption::Region => "Region (drag-select)".into(),
         DisplayOption::AudioOnly => "Audio only (no video)".into(),
     }
