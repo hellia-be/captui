@@ -602,6 +602,18 @@ impl App {
         list.select(Some((cur + delta).rem_euclid(len as isize) as usize));
     }
 
+    fn select_index(&mut self, c: char) {
+        let pos = match c {
+            '1'..='9' => (c as u8 - b'1') as usize,
+            '0' => 9,
+            _ => return,
+        };
+        let (list, len) = self.active_list();
+        if pos < len {
+            list.select(Some(pos));
+        }
+    }
+
     fn identify(&mut self) {
         self.status = Some(run_identify(&self.displays));
     }
@@ -1001,6 +1013,7 @@ fn run(
                 KeyCode::Down | KeyCode::Char('j') => app.move_by(1),
                 KeyCode::Up | KeyCode::Char('k') => app.move_by(-1),
                 KeyCode::Char('i') => app.identify(),
+                KeyCode::Char(c @ '0'..='9') => app.select_index(c),
                 KeyCode::Enter => app.record(),
                 _ => {}
             },
@@ -1091,15 +1104,23 @@ fn run_identify(_displays: &[Output]) -> String {
     "identify overlay not built in this binary".into()
 }
 
-fn row_label(n: usize, o: &Output, hint: &str) -> String {
+fn row_label(o: &Output, hint: &str) -> String {
     let mode = o.mode.map(|m| m.label()).unwrap_or_else(|| "?".into());
     let pos = match o.position {
         Some((x, y)) => format!("@{x},{y}"),
         None => String::new(),
     };
-    format!("{n:>2}. {:<9} {:<13} {:<12} {hint}", o.name, mode, pos)
+    format!("{:<9} {:<13} {:<12} {hint}", o.name, mode, pos)
         .trim_end()
         .to_string()
+}
+
+fn selection_prefix(pos: usize) -> String {
+    match pos {
+        0..=8 => format!("{}. ", pos + 1),
+        9 => "0. ".into(),
+        _ => "   ".into(),
+    }
 }
 
 fn audio_label(choice: &Option<AudioSource>) -> String {
@@ -1121,7 +1142,7 @@ fn draw(f: &mut Frame, app: &mut App) {
 fn display_option_label(app: &App, opt: &DisplayOption, hints: &[String]) -> String {
     match opt {
         DisplayOption::Display(i) => match app.displays.get(*i) {
-            Some(o) => row_label(i + 1, o, hints.get(*i).map(String::as_str).unwrap_or("")),
+            Some(o) => row_label(o, hints.get(*i).map(String::as_str).unwrap_or("")),
             None => String::new(),
         },
         DisplayOption::Window => "Window".into(),
@@ -1142,7 +1163,14 @@ fn draw_select(f: &mut Frame, app: &mut App, area: Rect) {
     let display_items: Vec<ListItem> = app
         .display_options
         .iter()
-        .map(|o| ListItem::new(display_option_label(app, o, &hints)))
+        .enumerate()
+        .map(|(pos, o)| {
+            ListItem::new(format!(
+                "{}{}",
+                selection_prefix(pos),
+                display_option_label(app, o, &hints)
+            ))
+        })
         .collect();
     draw_pane(
         f,
@@ -1156,7 +1184,8 @@ fn draw_select(f: &mut Frame, app: &mut App, area: Rect) {
     let audio_items: Vec<ListItem> = app
         .audio_options
         .iter()
-        .map(|c| ListItem::new(audio_label(c)))
+        .enumerate()
+        .map(|(pos, c)| ListItem::new(format!("{}{}", selection_prefix(pos), audio_label(c))))
         .collect();
     draw_pane(
         f,
@@ -1170,7 +1199,8 @@ fn draw_select(f: &mut Frame, app: &mut App, area: Rect) {
     let mic_items: Vec<ListItem> = app
         .mic_options
         .iter()
-        .map(|c| ListItem::new(audio_label(c)))
+        .enumerate()
+        .map(|(pos, c)| ListItem::new(format!("{}{}", selection_prefix(pos), audio_label(c))))
         .collect();
     draw_pane(
         f,
@@ -1272,7 +1302,7 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
     let paused = matches!(&app.recording, Some(r) if r.paused);
     let adjustable = matches!(&app.recording, Some(r) if !r.stopped && !r.paused && r.sources.iter().any(|s| s.sink_input.is_some()));
     let hint = match app.screen {
-        Screen::Select => " tab/←→ section  ↑↓ select  enter record  i identify  q quit ",
+        Screen::Select => " tab/←→ section  ↑↓/1-0 select  enter record  i identify  q quit ",
         Screen::Recording if stopped => {
             let saved = matches!(&app.recording, Some(r) if r.saved);
             if saved && app.config.transcribe_command.is_some() {
@@ -1292,4 +1322,17 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
         None => Paragraph::new(hint).style(Style::new().dim()),
     };
     f.render_widget(footer, area);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::selection_prefix;
+
+    #[test]
+    fn selection_prefix_numbers_first_ten_then_pads() {
+        assert_eq!(selection_prefix(0), "1. ");
+        assert_eq!(selection_prefix(8), "9. ");
+        assert_eq!(selection_prefix(9), "0. ");
+        assert_eq!(selection_prefix(10), "   ");
+    }
 }
